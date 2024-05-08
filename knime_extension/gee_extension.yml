@@ -8,3 +8,4 @@ dependencies:
   - knime-extension
   - knime-python-base
   - geemap
+  - geopandas

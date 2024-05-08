@@ -13,4 +13,10 @@ category = knext.category(
 
 
 # need import node files here
-import nodes.my_nodes_catergery
+# import nodes.authorization
+import nodes.io
+import nodes.manipulator
+import nodes.classifier
+import nodes.cluster
+import nodes.visualize
+import nodes.dataset
