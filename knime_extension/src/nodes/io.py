@@ -8,7 +8,7 @@ __category = knext.category(
     name="IO",
     description="Nodes that read and write from and to Google Earth Engine",
     # starting at the root folder of the extension_module parameter in the knime.yml file
-    icon="icons/icon/IOCategory.png",
+    icon="icons/icon/io.png",
 )
 
 # Root path for all node icons in this file
