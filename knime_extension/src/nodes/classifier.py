@@ -71,8 +71,6 @@ class SmileCartClassifier:
         import ee
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image = pickle.loads(input_binary)
         feature_collection = pickle.loads(input_binary_1)
 
@@ -141,11 +139,8 @@ class SimpleCartPredictor:
     def execute(
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
-        import ee
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image = pickle.loads(input_binary)
         classifier = pickle.loads(input_binary_1)
         bands = [b.strip(" ") for b in self.bands.split(",")]

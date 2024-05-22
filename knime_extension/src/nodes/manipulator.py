@@ -43,11 +43,8 @@ class CalculateMean:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        import ee
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image_collection = pickle.loads(input_binary)
         mean = image_collection.mean()
 
@@ -91,11 +88,8 @@ class ClipImage:
     def execute(
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
-        import ee
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image = pickle.loads(input_binary)
         feature_collection = pickle.loads(input_binary_1)
         clipped_image = image.clip(feature_collection.geometry())
@@ -140,11 +134,8 @@ class FilterBounds:
     def execute(
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
-        import ee
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image_collection = pickle.loads(input_binary)
         feature_collection = pickle.loads(input_binary_1)
         filtered_image_collection = image_collection.filterBounds(
@@ -206,8 +197,6 @@ class SampleRegions:
         import ee
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image = pickle.loads(input_binary)
         feature_collection = pickle.loads(input_binary_1)
         sampled_regions = image.sampleRegions(
@@ -251,11 +240,8 @@ class ErrorMatrix:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        import ee
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         sampled_regions = pickle.loads(input_binary)
         error_matrix = sampled_regions.errorMatrix("LC", "classification")
         overall_accuracy = error_matrix.accuracy().getInfo()

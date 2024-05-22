@@ -74,8 +74,6 @@ class GEEHarmonizedSentinel2MSIData:
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         import pickle
 
         # feature_collection = pickle.loads(input_binary)

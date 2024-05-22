@@ -3,8 +3,6 @@
 KNIME Extension for Google Earth Engine
 
 
-
-
 ## Package Organization
 
 * `knime_extension`: This folder contains all files of the KNIME  `gee`  extension such as the source code of each node. The folder itself is structured as suggested in the Python Best Practices file.
@@ -15,11 +13,11 @@ KNIME Extension for Google Earth Engine
 
 ## Installation
 The extension will be is installable via the [KNIME Hub](https://hub.knime.com/) once it is publicly available. 
-If you want to test the latest version you can follow the instructions in the Setup section of the [Contribution guide](https://github.com/spatial-data-lab/knime-geospatial-extension/blob/main/CONTRIBUTING.md#setup).
+If you want to test the latest version you can follow the instructions in the Setup section of the [Contribution guide](https://github.com/spatial-data-lab/knime-gee-extension/blob/main/CONTRIBUTING.md#setup).
 
 
 ## Contribute
-We are very happy about every contributor. Please read the [Contributors' Guide](https://github.com/spatial-data-lab/knime-geospatial-extension/blob/main/CONTRIBUTING.md) for more details.
+We are very happy about every contributor. Please read the [Contributors' Guide](https://github.com/spatial-data-lab/knime-gee-extension/blob/main/CONTRIBUTING.md) for more details.
 
 
 ## License

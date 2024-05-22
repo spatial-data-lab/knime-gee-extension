@@ -65,12 +65,9 @@ class SearchDataFromGEEDataCatalogNode:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext):
-        import ee
         import pandas as pd
         from geemap import common as cm
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         # search_keyword = self.search_keyword
         # max_items = self.max_items
 
@@ -122,8 +119,6 @@ class GEEImage:
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image = ee.Image(self.data_set_id)
 
         info = image.getInfo()
@@ -173,8 +168,6 @@ class GEEFeatureCollection:
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         feature_collection = ee.FeatureCollection(self.data_set_id)
 
         info = feature_collection.first().getInfo()
@@ -222,12 +215,8 @@ class LocalShapefileToGEEFeatureCollection:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext):
-        import ee
         import geemap
-        import os
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         local_shapefile = self.local_shapefile
         feature_collection = geemap.shp_to_ee(local_shapefile)
 
@@ -279,12 +268,9 @@ class ExportImage:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        import ee
         import geemap
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image = pickle.loads(input_binary)
         geemap.ee_export_image(
             image, filename=self.output_path, scale=self.scale, region=image.geometry()
@@ -322,12 +308,9 @@ class ExportFeatureCollection:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        import ee
         import geemap
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         feature_collection = pickle.loads(input_binary)
         geemap.ee_to_shp(feature_collection, filename=self.output_path)
         return None
@@ -361,13 +344,9 @@ class GEEFeatureCollectionToGeoTable:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        import ee
         import geemap
-        import pandas as pd
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         feature_collection = pickle.loads(input_binary)
         gdf = geemap.ee_to_gdf(feature_collection)
 
@@ -406,14 +385,10 @@ class GeoTableToGEEFeatureCollection:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_table):
-        import ee
         import geemap
-        import pandas as pd
         import geopandas as gpd
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         df = input_table.to_pandas()
         gdf = gpd.GeoDataFrame(df)
         feature_collection = geemap.geopandas_to_ee(gdf)
@@ -462,12 +437,8 @@ class LocalTiffToGEEImage:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext):
-        import ee
         import geemap
-        import os
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         local_tiff = self.local_tiff
         image = geemap.tif_to_ee(local_tiff)
 
@@ -565,13 +536,9 @@ class GetImageInfo:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        import ee
-        import geemap
-        import pandas as pd
+
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         image = pickle.loads(input_binary)
         info = image.getInfo()
         import json
@@ -615,13 +582,10 @@ class GetFeatureCollectionInfo:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        import ee
-        import geemap
+
         import pandas as pd
         import pickle
 
-        ee.Authenticate()
-        ee.Initialize(project="gogletetst")
         feature_collection = pickle.loads(input_binary)
         info = feature_collection.first().getInfo()
         import json

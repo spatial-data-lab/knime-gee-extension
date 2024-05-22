@@ -5,8 +5,8 @@ import knime_extension as knext
 category = knext.category(
     path="/community",
     level_id="gee", # this is the id of the category in the node repository #FIXME: 
-    name="gee",
-    description="KNIME Extension for Google Earth Engine",
+    name="Google Earth Engine",
+    description="Nodes for Google Earth Engine",
     # starting at the root folder of the extension_module parameter in the knime.yml file
     icon="icons/knime-gee.png",
 )
