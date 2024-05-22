@@ -7,7 +7,7 @@ __category = knext.category(
     level_id="dataset",
     name="Dataset",
     description="Dataset nodes for Google Earth Engine",
-    icon="icons\dataset.png",
+    icon="icons/dataset.png",
 )
 
 # Root path for all node icons in this file
