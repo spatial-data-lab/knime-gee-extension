@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Created with Vectornator (http://vectornator.io/) -->
+<svg height="100%" stroke-miterlimit="10" style="fill-rule:nonzero;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;" version="1.1" viewBox="758.103 286.523 51.3762 63.2294" width="100%" xml:space="preserve" xmlns="http://www.w3.org/2000/svg" xmlns:vectornator="http://vectornator.io" xmlns:xlink="http://www.w3.org/1999/xlink">
+<defs/>
+<clipPath id="ArtboardFrame">
+<rect height="63.2294" width="51.3762" x="758.103" y="286.523"/>
+</clipPath>
+<g clip-path="url(#ArtboardFrame)" id="Layer" vectornator:layerName="Layer">
+<g opacity="1" vectornator:layerName="Lock 2">
+<path d="M794.797 347.769L772.785 347.769C765.771 347.769 760.085 342.084 760.085 335.07L760.085 317.291C760.085 314.954 761.981 313.058 764.318 313.058L803.263 313.058C805.601 313.058 807.496 314.954 807.496 317.291L807.496 335.07C807.496 342.084 801.81 347.769 794.797 347.769ZM801.57 312.635L801.57 306.711C801.57 297.07 794.074 288.86 784.439 288.517C774.325 288.158 766.012 296.251 766.012 306.285L766.012 312.211" fill="none" opacity="1" stroke="#000000" stroke-linecap="butt" stroke-linejoin="miter" stroke-width="3.9653" vectornator:layerName="path"/>
+<path d="M771.938 312.211L771.938 306.619C771.938 300.238 776.843 294.745 783.218 294.446C790.024 294.125 795.644 299.549 795.644 306.285L795.644 312.635" fill="none" opacity="1" stroke="#000000" stroke-linecap="butt" stroke-linejoin="miter" stroke-width="3.9653" vectornator:layerName="path"/>
+<path d="M796.913 320.254L807.496 320.254M790.14 320.254L794.374 320.254M760.085 320.254L787.601 320.254" fill="none" opacity="1" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.9653" vectornator:layerName="path"/>
+<path d="M760.085 327.874L807.496 327.874" fill="none" opacity="0" stroke="#000000" stroke-linecap="butt" stroke-linejoin="miter" stroke-width="3.9653" vectornator:layerName="path"/>
+<path d="M786.754 342.266L785.149 335.846C785.613 335.459 785.907 334.875 785.907 334.223C785.907 333.054 784.96 332.107 783.791 332.107C782.622 332.107 781.674 333.054 781.674 334.223C781.674 334.875 781.969 335.459 782.433 335.846L780.828 342.266L786.754 342.266Z" fill="none" opacity="1" stroke="#000000" stroke-linecap="butt" stroke-linejoin="round" stroke-width="3.9653" vectornator:layerName="path"/>
+<path d="M766.035 320.101L760.47 328.034M772.808 320.101L767.243 328.034M779.581 320.101L774.016 328.034M786.354 320.101L780.789 328.034M793.127 320.101L787.562 328.034M799.9 320.101L794.335 328.034M806.673 320.101L801.108 328.034" fill="none" opacity="0" stroke="#000000" stroke-linecap="butt" stroke-linejoin="miter" stroke-width="3.9653" vectornator:layerName="path"/>
+</g>
+</g>
+</svg>

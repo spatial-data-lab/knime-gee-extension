@@ -7,7 +7,7 @@ __category = knext.category(
     level_id="manipulator",
     name="Manipulator",
     description="Manipulator nodes for Google Earth Engine",
-    icon="icons/icon/manipulator.png",
+    icon="icons/manipulator.png",
 )
 
 # Root path for all node icons in this file
@@ -21,7 +21,7 @@ __NODE_ICON_PATH = "icons/icon/manipulator/"
     name="Calculate Mean",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "manipulator.png",
     after="",
 )
 @knext.input_binary(
@@ -62,7 +62,7 @@ class CalculateMean:
     name="Clip Image",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "manipulator.png",
     after="",
 )
 @knext.input_binary(
@@ -111,7 +111,7 @@ class ClipImage:
     name="Filter Bounds",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "manipulator.png",
     after="",
 )
 @knext.input_binary(
@@ -162,7 +162,7 @@ class FilterBounds:
     name="Sample Regions",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "manipulator.png",
     after="",
 )
 @knext.input_binary(
@@ -226,7 +226,7 @@ class SampleRegions:
     name="Error Matrix",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "manipulator.png",
     after="",
 )
 @knext.input_binary(

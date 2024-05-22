@@ -7,11 +7,11 @@ __category = knext.category(
     level_id="classifier",
     name="Classifier",
     description="Classifier nodes for Google Earth Engine",
-    icon="icons/icon/classifier.png",
+    icon="icons/classifier.png",
 )
 
 # Root path for all node icons in this file
-__NODE_ICON_PATH = "icons/icon/manipulator/"
+__NODE_ICON_PATH = "icons/icon/classifier/"
 
 
 ############################################
@@ -21,7 +21,7 @@ __NODE_ICON_PATH = "icons/icon/manipulator/"
     name="SmileCart Classifier",
     node_type=knext.NodeType.LEARNER,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "classifier.png",
     after="",
 )
 @knext.input_binary(
@@ -106,7 +106,7 @@ class SmileCartClassifier:
     name="SimpleCart Predictor",
     node_type=knext.NodeType.PREDICTOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "classifier.png",
     after="",
 )
 @knext.input_binary(

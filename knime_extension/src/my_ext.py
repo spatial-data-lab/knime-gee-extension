@@ -8,7 +8,7 @@ category = knext.category(
     name="gee",
     description="KNIME Extension for Google Earth Engine",
     # starting at the root folder of the extension_module parameter in the knime.yml file
-    icon="icons/icon/knime-gee.png",
+    icon="icons/knime-gee.png",
 )
 
 

@@ -7,7 +7,7 @@ __category = knext.category(
     level_id="visualize",
     name="Visualize",
     description="Visualize nodes for Google Earth Engine",
-    icon="icons/icon/visualize.png",
+    icon="icons/visualize.png",
 )
 
 # Root path for all node icons in this file
@@ -20,7 +20,7 @@ __NODE_ICON_PATH = "icons/icon/visualize/"
 @knext.node(
     name="GEE Map",
     node_type=knext.NodeType.VISUALIZER,
-    icon_path=__NODE_ICON_PATH + "GEEMap.png",
+    icon_path=__NODE_ICON_PATH + "visualize.png",
     category=__category,
     after="",
 )

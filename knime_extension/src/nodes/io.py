@@ -8,7 +8,7 @@ __category = knext.category(
     name="IO",
     description="Nodes that read and write from and to Google Earth Engine",
     # starting at the root folder of the extension_module parameter in the knime.yml file
-    icon="icons/icon/io.png",
+    icon="icons/io.png",
 )
 
 # Root path for all node icons in this file
@@ -21,7 +21,7 @@ __NODE_ICON_PATH = "icons/icon/io/"
 @knext.node(
     name="Search Data From GEE Data Catalog",
     node_type=knext.NodeType.SOURCE,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     category=__category,
     after="",
 )
@@ -93,7 +93,7 @@ class SearchDataFromGEEDataCatalogNode:
     name="GEE Image",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.output_binary(
@@ -144,7 +144,7 @@ class GEEImage:
     name="GEE Feature Collection",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.output_binary(
@@ -195,7 +195,7 @@ class GEEFeatureCollection:
     name="Local Shapefile to GEE Feature Collection",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.output_binary(
@@ -250,7 +250,7 @@ class LocalShapefileToGEEFeatureCollection:
     name="Export Image",
     node_type=knext.NodeType.SINK,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.input_binary(
@@ -299,7 +299,7 @@ class ExportImage:
     name="Export Feature Collection",
     node_type=knext.NodeType.SINK,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.input_binary(
@@ -340,7 +340,7 @@ class ExportFeatureCollection:
     name="GEE Feature Collection to GeoTable",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.input_binary(
@@ -381,7 +381,7 @@ class GEEFeatureCollectionToGeoTable:
     name="GeoTable to GEE Feature Collection",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.input_table(
@@ -435,7 +435,7 @@ class GeoTableToGEEFeatureCollection:
     name="Local Tiff to GEE Image",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.output_binary(
@@ -489,7 +489,7 @@ class LocalTiffToGEEImage:
 #     name="Export Video",
 #     node_type=knext.NodeType.SINK,
 #     category=__category,
-#     icon_path=__NODE_ICON_PATH + "GEE.png",
+#     icon_path=__NODE_ICON_PATH + "io.png",
 #     after="",
 # )
 # @knext.input_binary(
@@ -539,7 +539,7 @@ class LocalTiffToGEEImage:
     name="Get Image Info",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.input_binary(
@@ -589,7 +589,7 @@ class GetImageInfo:
     name="Get Feature Collection Info",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
 @knext.input_binary(

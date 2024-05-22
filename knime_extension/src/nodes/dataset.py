@@ -7,7 +7,7 @@ __category = knext.category(
     level_id="dataset",
     name="Dataset",
     description="Dataset nodes for Google Earth Engine",
-    icon="icons/icon/dataset.png",
+    icon="icons\dataset.png",
 )
 
 # Root path for all node icons in this file
@@ -21,7 +21,7 @@ __NODE_ICON_PATH = "icons/icon/dataset/"
     name="GEE Harmonized Sentinel-2 MSI Data",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "GEE.png",
+    icon_path=__NODE_ICON_PATH + "dataset.png",
     after="",
 )
 # @knext.input_binary(
