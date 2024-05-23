@@ -13,7 +13,7 @@ category = knext.category(
 
 
 # need import node files here
-# import nodes.authorization
+import nodes.authorization
 import nodes.io
 import nodes.manipulator
 import nodes.classifier
