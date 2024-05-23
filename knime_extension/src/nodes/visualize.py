@@ -79,7 +79,9 @@ class ViewNodeGEEMap:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import pickle
 
         image = pickle.loads(input_binary)

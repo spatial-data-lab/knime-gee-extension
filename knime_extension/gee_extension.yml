@@ -1,4 +1,4 @@
-name: gee_extension
+name: gee_extension2
 channels:
   - knime
   - conda-forge

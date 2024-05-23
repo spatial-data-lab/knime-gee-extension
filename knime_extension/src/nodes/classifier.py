@@ -69,6 +69,8 @@ class SmileCartClassifier:
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
         import ee
+        ee.Authenticate()
+        ee.Initialize()
         import pickle
 
         image = pickle.loads(input_binary)
@@ -139,6 +141,9 @@ class SimpleCartPredictor:
     def execute(
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import pickle
 
         image = pickle.loads(input_binary)

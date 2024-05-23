@@ -65,6 +65,9 @@ class SearchDataFromGEEDataCatalogNode:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import pandas as pd
         from geemap import common as cm
 
@@ -118,7 +121,8 @@ class GEEImage:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
-
+        ee.Authenticate()
+        ee.Initialize()
         image = ee.Image(self.data_set_id)
 
         info = image.getInfo()
@@ -167,7 +171,8 @@ class GEEFeatureCollection:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
-
+        ee.Authenticate()
+        ee.Initialize()
         feature_collection = ee.FeatureCollection(self.data_set_id)
 
         info = feature_collection.first().getInfo()
@@ -216,6 +221,9 @@ class LocalShapefileToGEEFeatureCollection:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import geemap
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
 
         local_shapefile = self.local_shapefile
         feature_collection = geemap.shp_to_ee(local_shapefile)
@@ -268,6 +276,9 @@ class ExportImage:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import geemap
         import pickle
 
@@ -308,6 +319,9 @@ class ExportFeatureCollection:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import geemap
         import pickle
 
@@ -344,6 +358,9 @@ class GEEFeatureCollectionToGeoTable:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import geemap
         import pickle
 
@@ -385,6 +402,9 @@ class GeoTableToGEEFeatureCollection:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_table):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import geemap
         import geopandas as gpd
         import pickle
@@ -437,6 +457,9 @@ class LocalTiffToGEEImage:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import geemap
 
         local_tiff = self.local_tiff
@@ -536,7 +559,9 @@ class GetImageInfo:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import pickle
 
         image = pickle.loads(input_binary)
@@ -582,8 +607,10 @@ class GetFeatureCollectionInfo:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-
-        import pandas as pd
+        
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         import pickle
 
         feature_collection = pickle.loads(input_binary)

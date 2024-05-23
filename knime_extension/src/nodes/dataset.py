@@ -58,6 +58,9 @@ class GEEHarmonizedSentinel2MSIData:
     # TODO: add region to constrain the data to a specific region
     # Function to mask clouds using the Sentinel-2 QA band
     def mask_s2_clouds(self, image):
+        import ee
+        ee.Authenticate()
+        ee.Initialize()
         qa = image.select("QA60")
         cloud_bit_mask = 1 << 10
         cirrus_bit_mask = 1 << 11
@@ -73,7 +76,8 @@ class GEEHarmonizedSentinel2MSIData:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
-
+        ee.Authenticate()
+        ee.Initialize()
         import pickle
 
         # feature_collection = pickle.loads(input_binary)
