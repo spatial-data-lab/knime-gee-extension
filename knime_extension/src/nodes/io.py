@@ -1,6 +1,10 @@
 import knime_extension as knext
 import util.knime_utils as knut
-
+from util.common import (
+    GoogleEarthEngineObjectSpec,
+    GoogleEarthEngineConnectionObject,
+    google_earth_engine_port_type,
+)
 
 __category = knext.category(
     path="/community/gee",
@@ -24,6 +28,11 @@ __NODE_ICON_PATH = "icons/icon/io/"
     icon_path=__NODE_ICON_PATH + "io.png",
     category=__category,
     after="",
+)
+@knext.input_port(
+    "Google Earth Engine Connection",
+    "Contains necessary information to access the Google Earth Engine API",
+    google_earth_engine_port_type,
 )
 @knext.output_table(
     name="search result",
@@ -66,8 +75,9 @@ class SearchDataFromGEEDataCatalogNode:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
-        ee.Authenticate()
-        ee.Initialize()
+
+        # ee.Authenticate()
+        # ee.Initialize()
         import pandas as pd
         from geemap import common as cm
 
@@ -96,6 +106,11 @@ class SearchDataFromGEEDataCatalogNode:
     icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
+@knext.input_port(
+    "Google Earth Engine Connection",
+    "Contains necessary information to access the Google Earth Engine API",
+    google_earth_engine_port_type,
+)
 @knext.output_binary(
     name="Image",
     description="The output binary containing the GEE Image.",
@@ -121,8 +136,9 @@ class GEEImage:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
-        ee.Authenticate()
-        ee.Initialize()
+
+        # ee.Authenticate()
+        # ee.Initialize()
         image = ee.Image(self.data_set_id)
 
         info = image.getInfo()
@@ -171,6 +187,7 @@ class GEEFeatureCollection:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         feature_collection = ee.FeatureCollection(self.data_set_id)
@@ -222,6 +239,7 @@ class LocalShapefileToGEEFeatureCollection:
     def execute(self, exec_context: knext.ExecutionContext):
         import geemap
         import ee
+
         ee.Authenticate()
         ee.Initialize()
 
@@ -277,6 +295,7 @@ class ExportImage:
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import geemap
@@ -320,6 +339,7 @@ class ExportFeatureCollection:
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import geemap
@@ -359,6 +379,7 @@ class GEEFeatureCollectionToGeoTable:
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import geemap
@@ -403,6 +424,7 @@ class GeoTableToGEEFeatureCollection:
 
     def execute(self, exec_context: knext.ExecutionContext, input_table):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import geemap
@@ -458,6 +480,7 @@ class LocalTiffToGEEImage:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import geemap
@@ -560,6 +583,7 @@ class GetImageInfo:
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
@@ -607,8 +631,9 @@ class GetFeatureCollectionInfo:
         return None
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
-        
+
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
