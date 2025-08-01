@@ -131,14 +131,24 @@ class GEEImage:
         default_value="LANDSAT/LE7_TOA_5YEAR/1999_2003",
     )
 
-    def configure(self, configure_context):
+    def configure(
+        self,
+        configure_context,
+        gee_port: GoogleEarthEngineObjectSpec,
+    ):
         return None
 
-    def execute(self, exec_context: knext.ExecutionContext):
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        gee_port: GoogleEarthEngineConnectionObject,
+    ):
+
+        # ee is already initialized in the Google Earth Engine Connector node
+        # so we can use it directly here without re-initializing it!
+
         import ee
 
-        # ee.Authenticate()
-        # ee.Initialize()
         image = ee.Image(self.data_set_id)
 
         info = image.getInfo()

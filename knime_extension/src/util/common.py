@@ -51,48 +51,42 @@ LOGGER = logging.getLogger(__name__)
 
 
 class GoogleEarthEngineObjectSpec(knext.PortObjectSpec):
-    def __init__(self, account_id: str) -> None:
+    def __init__(self, project_id: str) -> None:
         super().__init__()
-        self._account_id = account_id
+        self._project_id = project_id
 
     @property
-    def account_id(self) -> str:
-        return self._account_id
+    def project_id(self) -> str:
+        return self._project_id
 
     def serialize(self) -> dict:
-        return {"account_id": self._account_id}
+        return {"project_id": self._project_id}
 
     @classmethod
     def deserialize(cls, data: dict) -> "GoogleEarthEngineObjectSpec":
-        return cls(data["account_id"])
+        return cls(data["project_id"])
 
 
-#
+# Since this is a connection port object, all nodes connected to this port use the same Python process.
+# Therefore, initializing the Google Earth Engine in the Google Earth Engine Connector node is enough.
+# Any stateful objects created there will be shared with all other nodes connected to it.
 class GoogleEarthEngineConnectionObject(ConnectionPortObject):
     def __init__(
         self,
         spec: GoogleEarthEngineObjectSpec,
-        client: "client",
     ) -> None:
         super().__init__(spec)
-        self._client = client
 
     @property
     def spec(self) -> GoogleEarthEngineObjectSpec:
         return super().spec
-
-    @property
-    def client(self):
-        return self._client
 
     def to_connection_data(self):
         """
         Provide the data that makes up this ConnectionPortObject such that it can be used
         by downstream nodes in the ``from_connection_data`` method.
         """
-        return {
-            "client": self._client,
-        }
+        return {}
 
     @classmethod
     def from_connection_data(
@@ -107,7 +101,7 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         all nodes using this ConnectionPortObject.
         """
 
-        return cls(spec, data["client"])
+        return cls(spec)
 
 
 google_earth_engine_port_type = knext.port_type(

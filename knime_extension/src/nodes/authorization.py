@@ -1,3 +1,4 @@
+import ee
 import knime_extension as knext
 import util.knime_utils as knut
 from google.oauth2.credentials import (
@@ -65,26 +66,36 @@ class GEEAuthenticate:
         exec_context: knext.ExecutionContext,
         credential: knext.PortObject,
     ):
+
+        from google.oauth2.credentials import (
+            Credentials,
+        )
+
         # Combine credentials with customer ID
         # Use the access token provided in the input port.
         # Token refresh is handled by the provided refresh handler that requests the token from the input port.
+        credential_spec = credential.spec
         credentials = Credentials(
-            token=str(credential.spec.auth_parameters),
-            expiry=credential.spec.expires_after,
-            refresh_handler=get_refresh_handler(credential.spec),
+            token=str(credential_spec.auth_parameters),
+            expiry=credential_spec.expires_after,
+            refresh_handler=get_refresh_handler(credential_spec),
         )
 
         import ee
 
-        # ee.Authenticate(authorization_code=credentials)
+        exec_context.set_progress(
+            0.5, f"Initializing GEE with project ID: {self.project_id}"
+        )
+
+        knut.check_canceled(exec_context)
+
+        # Initialize the Earth Engine API with the provided credentials and project ID
         ee.Initialize(credentials=credentials, project=self.project_id)
-        # Create a client for Google Earth Engine
-        client = ee.data
 
         port_object = GoogleEarthEngineConnectionObject(
-            GoogleEarthEngineObjectSpec(account_id="test"),
-            client=client,
+            GoogleEarthEngineObjectSpec(project_id=self.project_id)
         )
+
         return port_object
 
 
