@@ -584,7 +584,7 @@ class LocalGeoTableReducer:
         default_value=100,
         min_value=1,
         max_value=10000,
-    )
+    ).rule(knext.OneOf(batch_boolean, [True]), knext.Effect.SHOW)
 
     def configure(self, configure_context, input_table_schema, input_binary_spec):
         self.geo_col = knut.column_exists_or_preset(
