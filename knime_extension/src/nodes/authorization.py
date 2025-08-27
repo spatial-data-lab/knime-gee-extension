@@ -48,13 +48,62 @@ __NODE_ICON_PATH = "icons/icon/authorization/"
     google_earth_engine_port_type,
 )
 class GEEAuthenticate:
-    """GEE Authenticate.
-    GEE Authenticate node.
+    """Establishes a connection to Google Earth Engine (GEE) with Google Authenticator.
+
+    This node establishes a connection to Google Earth Engine (GEE) for accessing satellite imagery
+    and geospatial data. It supports two authentication methods with Google Authenticator:
+
+    1. **Interactive Authentication**: Uses your personal Google account credentials
+    2. **Service Account Authentication**: Uses a Google Cloud service account JSON key
+
+    **Setup Instructions:**
+
+    **For Interactive Authentication:**
+
+    - In the Google Authenticator node, select "Interactive" authentication method
+
+    - Set scope to "Custom" and enter: https://www.googleapis.com/auth/earthengine
+
+    - Sign in with your Google account that has Earth Engine access
+
+    **For Service Account Authentication:**
+
+    - In the Google Authenticator node, select "Google Service Account JSON Key" method
+
+    - Upload your service account JSON key file
+
+    - Set scope to "Custom" and enter: https://www.googleapis.com/auth/earthengine
+
+    **Important**: You must add the "Service Usage Consumer" role to your service account:
+
+      - Go to Google Cloud Console > IAM & Admin > IAM
+
+      - Find your service account and click the Edit icon
+
+      - Click "Add another role"
+
+      - Search for "Service Usage Consumer" and add it
+
+      - Click "Save" and wait a few minutes for activation
+
+    **Project ID:**
+
+    - Must be associated with either your interactive account or service account
+
+    - **Easy way to find it**: Visit https://code.earthengine.google.com/ and click the avatar
+      in the top-right corner to view Project info
+
+    - The Project ID is required for all GEE operations
+
+    **Note:** Ensure your Google account or service account has been approved for Earth Engine access
+    at https://signup.earthengine.google.com/
     """
 
     project_id = knext.StringParameter(
-        label="Project Id",
-        description=("The client project ID or number to use when making API calls."),
+        label="Project ID",
+        description=(
+            "The Google Cloud Project ID associated with your Earth Engine account. "
+        ),
         default_value="",
     )
 

@@ -37,12 +37,26 @@ __NODE_ICON_PATH = "icons/"
 )
 @knext.output_binary(
     name="GEE Image",
-    description="The output binary containing the GEE Image with embedded credentials.",
+    description="The GEE Image.",
     id="geemap.gee.Image",
 )
 class GEEImageReader:
-    """GEE Image Reader.
-    Reads a single image from Google Earth Engine.
+    """Loads a single image from Google Earth Engine using the specified image ID.
+
+    This node allows you to access individual satellite images, elevation data, or other geospatial datasets from GEE's
+    extensive catalog for further analysis in KNIME workflows.
+
+    **Common Image Examples:**
+
+    - Elevation: 'USGS/SRTMGL1_003' (30m resolution)
+
+    - ESA Elevation: 'ESA/WorldCover/v100' (10m resolution)
+
+    - WorldPop Population: 'CIESIN/GPWv411/GPW_Population_Density' (30 arc-second)
+
+    - Global Forest: 'UMD/hansen/global_forest_change_2021_v1_9' (30m resolution)
+
+    - Global Settlement: 'WSF/WSF_v1' (10m resolution)
     """
 
     imagename = knext.StringParameter(
@@ -100,12 +114,40 @@ class GEEImageReader:
 )
 @knext.output_binary(
     name="GEE Image",
-    description="The output binary containing the aggregated GEE Image with embedded credentials.",
+    description="The output aggregated GEE Image.",
     id="geemap.gee.Image",
 )
 class GEEImageCollectionReader:
-    """GEE Image Collection Reader.
-    Reads and aggregates images from a Google Earth Engine collection.
+    """Loads and aggregates multiple images from a Google Earth Engine image collection based on date range and aggregation method.
+
+    This node is useful for accessing time-series satellite data, reducing cloud cover by creating composite images,
+    and processing large collections of satellite imagery efficiently.
+
+    **Aggregation Methods:**
+
+    - **first**: Returns the first image in the collection (useful for cloud-free composites)
+
+    - **mean**: Calculates pixel-wise mean (good for reducing noise)
+
+    - **median**: Calculates pixel-wise median (robust to outliers)
+
+    - **min/max**: Finds minimum/maximum values (useful for NDVI analysis)
+
+    - **sum**: Adds pixel values (useful for cumulative indices)
+
+    - **mode**: Finds most frequent values (useful for classification)
+
+    **Common Collections:**
+
+    - Sentinel-2: 'COPERNICUS/S2_SR' (10m resolution, optical)
+
+    - Landsat 8: 'LANDSAT/LC08/C02/T1_L2' (30m resolution, optical)
+
+    - MODIS: 'MODIS/006/MOD13Q1' (250m resolution, vegetation indices)
+
+    - Landsat 7: 'LANDSAT/LE07/C02/T1_L2' (30m resolution, optical)
+
+    - Sentinel-1: 'COPERNICUS/S1_GRD' (10m resolution, radar)
     """
 
     collection_id = knext.StringParameter(
@@ -200,17 +242,32 @@ class GEEImageCollectionReader:
 )
 @knext.input_binary(
     name="GEE Image",
-    description="The input binary containing the GEE Image with embedded credentials.",
+    description="The input GEE Image.",
     id="geemap.gee.Image",
 )
 @knext.output_binary(
     name="GEE Image",
-    description="The output binary containing the filtered GEE Image with embedded credentials.",
+    description="The filtered GEE Image.",
     id="geemap.gee.Image",
 )
 class BandSelector:
-    """Band Selector.
-    Selects specific bands from a GEE Image.
+    """Filters and selects specific bands from a Google Earth Engine image.
+
+    This node allows you to filter and select specific bands from a Google Earth Engine image, allowing you to focus on relevant spectral information and reduce data size.
+    This node is useful for preparing images for specific applications like vegetation analysis, water detection, or optimizing processing speed by selecting only necessary bands.
+
+    **Common Band Combinations:**
+
+    - **RGB**: 'B4,B3,B2' (Sentinel-2) or 'B4,B3,B2' (Landsat 8)
+
+    - **False Color**: 'B8,B4,B3' (Sentinel-2) - good for vegetation
+
+    - **SWIR**: 'B12,B8,B4' (Sentinel-2) - good for moisture detection
+
+    - **NDVI Bands**: 'B8,B4' (Sentinel-2) - for vegetation index calculation
+
+
+    **Note:** If no specified bands are found in the image, the original image is returned unchanged.
     """
 
     bands = knext.StringParameter(
@@ -272,7 +329,7 @@ class BandSelector:
 )
 @knext.input_binary(
     name="GEE Image",
-    description="The input binary containing the GEE Image with embedded credentials.",
+    description="The input GEE Image.",
     id="geemap.gee.Image",
 )
 @knext.output_table(
@@ -280,8 +337,23 @@ class BandSelector:
     description="Table with ID and extracted image values for each band",
 )
 class GetImageValueByLatLon:
-    """Get Image Value by LatLon.
-    Extracts pixel values from a GEE image at specified latitude/longitude coordinates.
+    """Extracts pixel values from a Google Earth Engine image at specified latitude/longitude coordinates.
+
+    This node extracts pixel values from a Google Earth Engine image at specified latitude/longitude coordinates,
+    creating a table with extracted values for each point. This node is useful for creating point-based datasets for statistical analysis,
+    sampling remote sensing data for ground truth validation, and generating training data for machine learning models.
+    The node uses efficient batch processing to handle large numbers of points quickly.
+
+    **Input Requirements:**
+
+    - Table must contain ID, latitude, and longitude columns
+
+    - Coordinates should be in decimal degrees (WGS84)
+
+    - Scale parameter controls sampling resolution (default: 30m)
+
+    **Note:** Data transfer between local systems and Google Earth Engine cloud is subject to GEE's transmission limits.
+    For large datasets (thousands of points), consider processing in smaller batches to avoid data limit errors.
     """
 
     id_column = knext.ColumnParameter(
@@ -382,7 +454,7 @@ class GetImageValueByLatLon:
 )
 @knext.input_binary(
     name="GEE Feature Collection",
-    description="The input binary containing the GEE Feature Collection with embedded credentials.",
+    description="The input  GEE Feature Collection.",
     id="geemap.gee.FeatureCollection",
 )
 @knext.output_table(
@@ -390,8 +462,22 @@ class GetImageValueByLatLon:
     description="Table converted from GEE Feature Collection",
 )
 class FeatureCollectionToTable:
-    """Feature Collection to Table.
-    Converts a GEE Feature Collection to a KNIME table.
+    """Converts a Google Earth Engine FeatureCollection to a local table.
+
+    This node converts a Google Earth Engine FeatureCollection to a KNIME table,
+    allowing you to work with GEE vector data in standard tabular format.
+    This node bridges GEE vector operations with KNIME's data processing capabilities,
+    making it useful for exporting classification results, converting GEE vector analysis outputs,
+    and processing GEE-generated point samples or administrative boundaries.
+
+    **Output Formats:**
+
+    - **DataFrame**: Standard tabular format with attribute data only
+
+    - **GeoDataFrame**: Tabular format with embedded geometry information
+
+    **Note:** Data transfer from Google Earth Engine cloud to local systems is subject to GEE's transmission limits.
+    For large FeatureCollections, using loop to process the data is recommended.
     """
 
     file_format = knext.StringParameter(
@@ -457,12 +543,20 @@ class FeatureCollectionToTable:
 )
 @knext.output_binary(
     name="GEE Feature Collection",
-    description="The output binary containing the GEE Feature Collection with embedded credentials.",
+    description="The output  GEE Feature Collection.",
     id="geemap.gee.FeatureCollection",
 )
 class GeoTableToFeatureCollection:
-    """GeoTable to Feature Collection.
-    Converts a KNIME table with geometry to a GEE Feature Collection.
+    """Converts a local GeoTable to a Google Earth Engine FeatureCollection.
+
+    This node converts a KNIME table containing geometry data to a Google Earth Engine FeatureCollection,
+    enabling vector data processing in GEE workflows. This node bridges local GIS data with GEE's processing capabilities,
+    making it useful for uploading study area boundaries, converting training samples for classification,
+    processing custom administrative boundaries, and working with field survey data or sampling points.
+
+    **Note:** Data transfer from local systems to Google Earth Engine cloud is subject to GEE's transmission limits.
+    For large geometry datasets, consider processing in smaller batches to avoid data limit errors.
+
     """
 
     geo_col = knext.ColumnParameter(
@@ -537,7 +631,7 @@ class GeoTableToFeatureCollection:
 )
 @knext.input_binary(
     name="GEE Image",
-    description="The input binary containing the GEE Image with embedded credentials.",
+    description="The input GEE Image.",
     id="geemap.gee.Image",
 )
 @knext.output_table(
@@ -545,8 +639,40 @@ class GeoTableToFeatureCollection:
     description="Table with zonal statistics for each geometry",
 )
 class LocalGeoTableReducer:
-    """Local GeoTable Reducer.
-    Performs zonal statistics on GEE image using local geometry table.
+    """Performs zonal statistics on a Google Earth Engine image using local geometry data.
+
+    This node performs zonal statistics on a Google Earth Engine image using local geometry data,
+    calculating statistical summaries for each polygon, line, or point feature.
+    This node is useful for calculating statistical summaries of raster values within vector boundaries,
+    performing area-based analysis like average NDVI per administrative unit, generating summary
+    statistics for environmental monitoring, and creating aggregated datasets for further analysis.
+    Data transfer between local systems and Google Earth Engine cloud is subject to GEE's transmission limits.
+    This node includes built-in batch processing functionality to handle large datasets efficiently.
+
+    **Statistical Methods:**
+
+    - **mean**: Average value within each geometry
+
+    - **median**: Median value (robust to outliers)
+
+    - **min/max**: Minimum/maximum values
+
+    - **count**: Number of valid pixels
+
+    - **sum**: Sum of all pixel values
+
+    - **stdDev**: Standard deviation
+
+    - **variance**: Statistical variance
+
+    **Performance Features:**
+
+    - **Batch Processing**: Handles large datasets by processing in chunks
+
+    - **Configurable Scale**: Control sampling resolution for accuracy vs. speed
+
+    - **Multiple Statistics**: Calculate several statistics simultaneously
+
     """
 
     geo_col = knext.ColumnParameter(
