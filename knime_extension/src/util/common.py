@@ -74,19 +74,25 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
     def __init__(
         self,
         spec: GoogleEarthEngineObjectSpec,
+        credentials=None,
     ) -> None:
         super().__init__(spec)
+        self._credentials = credentials
 
     @property
     def spec(self) -> GoogleEarthEngineObjectSpec:
         return super().spec
+
+    @property
+    def credentials(self):
+        return self._credentials
 
     def to_connection_data(self):
         """
         Provide the data that makes up this ConnectionPortObject such that it can be used
         by downstream nodes in the ``from_connection_data`` method.
         """
-        return {}
+        return {"credentials": self._credentials}
 
     @classmethod
     def from_connection_data(
@@ -100,8 +106,8 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         The data should not be tempered with, as it is a Python object that is handed to
         all nodes using this ConnectionPortObject.
         """
-
-        return cls(spec)
+        credentials = data.get("credentials") if data else None
+        return cls(spec, credentials)
 
 
 google_earth_engine_port_type = knext.port_type(

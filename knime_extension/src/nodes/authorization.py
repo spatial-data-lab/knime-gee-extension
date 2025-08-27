@@ -93,7 +93,8 @@ class GEEAuthenticate:
         ee.Initialize(credentials=credentials, project=self.project_id)
 
         port_object = GoogleEarthEngineConnectionObject(
-            GoogleEarthEngineObjectSpec(project_id=self.project_id)
+            GoogleEarthEngineObjectSpec(project_id=self.project_id),
+            credentials=credentials,
         )
 
         return port_object

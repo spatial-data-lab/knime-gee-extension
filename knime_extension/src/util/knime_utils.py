@@ -149,6 +149,18 @@ def __is_type_x(column: knext.Column, type: str) -> bool:
     )
 
 
+__CELL_TYPE_GEO = "org.knime.geospatial.core.data.cell.Geo"
+
+
+def is_geo(column: knext.Column) -> bool:
+    """
+    Checks if column is compatible to the GeoValue interface and thus returns true for all geospatial types such as:
+    GeoPointCell, GeoLineCell, GeoPolygonCell, GeoMultiPointCell, GeoMultiLineCell, GeoMultiPolygonCell, ...
+    @return: True if Column Type is GeoValue compatible
+    """
+    return __is_type_x(column, __CELL_TYPE_GEO)
+
+
 ############################################
 # General helper
 ############################################
@@ -261,3 +273,93 @@ def check_canceled(exec_context: knext.ExecutionContext) -> None:
     """
     if exec_context.is_canceled():
         raise RuntimeError("Execution canceled")
+
+
+############################################
+# GeoPandas helper
+############################################
+# def load_geo_data_frame(
+#     input_table: knext.Table,
+#     column: knext.Column,
+#     exec_context: knext.ExecutionContext = None,
+#     load_msg: str = "Loading Geo data frame...",
+#     done_msg: str = "Geo data frame loaded. Start computation...",
+# ) -> gp.GeoDataFrame:
+#     """Creates a GeoDataFrame from the given input table using the provided column as geo column."""
+#     if exec_context:
+#         exec_context.set_progress(0.0, load_msg)
+#     import geopandas as gp
+
+#     gdf = gp.GeoDataFrame(input_table.to_pandas(), geometry=column)
+#     if exec_context:
+#         exec_context.set_progress(0.1, done_msg)
+#     return gdf
+
+
+# def to_table(
+#     gdf: gp.GeoDataFrame,
+#     exec_context: knext.ExecutionContext = None,
+#     done_msg: str = "Computation done",
+# ) -> knext.Table:
+#     """Returns a KNIME table representing the given GeoDataFrame."""
+#     if exec_context:
+#         exec_context.set_progress(1.0, done_msg)
+#     return knext.Table.from_pandas(gdf)
+
+
+############################################
+# GEE helper
+############################################
+def gee_export_init(output, credentials, project_id):
+    """
+    Export GEE data with credentials and project_id in a standardized format.
+
+    Args:
+        output: The actual output data (image, feature collection, etc.)
+        credentials: GEE credentials object (optional)
+        project_id: GEE project ID string (optional)
+
+    Returns:
+        bytes: Pickled data in format [credentials, project_id, output]
+    """
+    import pickle
+    import ee
+
+    # Create standardized output format
+    output_data = [credentials, project_id, output]
+
+    # Convert to binary
+    output_binary = pickle.dumps(output_data)
+
+    return output_binary
+
+
+def gee_import_init(input_binary, logger=None):
+    """
+    Import GEE data and initialize GEE with credentials and project_id.
+
+    Args:
+        input_binary: Pickled data in format [credentials, project_id, output]
+        logger: Optional logger for debug information
+
+    Returns:
+        tuple: (credentials, project_id, output)
+        - credentials: GEE credentials object or None
+        - project_id: GEE project ID string or None
+        - output: The actual output data
+    """
+    import pickle
+    import ee
+
+    # Load the data from binary
+    data = pickle.loads(input_binary)
+
+    credentials = data[0]
+    project_id = data[1]
+    input = data[2]
+
+    # Initialize GEE - simplified approach
+
+    ee.Initialize(credentials=credentials, project=project_id)
+
+    return credentials, project_id, input
