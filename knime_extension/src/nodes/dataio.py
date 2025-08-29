@@ -35,10 +35,10 @@ __NODE_ICON_PATH = "icons/"
     description="Google Earth Engine connection from the GEE Connector node.",
     port_type=google_earth_engine_port_type,
 )
-@knext.output_binary(
-    name="GEE Image",
-    description="The GEE Image.",
-    id="geemap.gee.Image",
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=google_earth_engine_port_type,
 )
 class GEEImageReader:
     """Loads a single image from Google Earth Engine using the specified image ID.
@@ -71,33 +71,9 @@ class GEEImageReader:
     def execute(self, exec_context: knext.ExecutionContext, gee_connection):
         import ee
 
-        # Get credentials and project ID from connection
-        credentials = gee_connection.credentials
-        project_id = gee_connection.spec.project_id
-
-        # Initialize GEE with credentials and project
-
-        ee.Initialize(credentials=credentials, project=project_id)
-
-        # Load the image
-        # LOGGER.warning(f"Loading image: {self.imagename}")
         image = ee.Image(self.imagename)
 
-        # Get image info for logging
-        # try:
-        #     info = image.getInfo()
-        #     LOGGER.warning(f"Successfully got image info: {info}")
-        # except Exception as e:
-        #     LOGGER.warning(f"Error getting image info: {e}")
-
-        # LOGGER.warning(f"Image object type: {type(image)}")
-        # LOGGER.warning(f"Image object: {image}")
-
-        # Export with credentials
-        output_binary = knut.gee_export_init(image, credentials, project_id)
-        # LOGGER.warning(f"Image binary size: {len(output_binary)} bytes")
-
-        return output_binary
+        return knut.export_gee_connection(image, gee_connection)
 
 
 @knext.node(
@@ -112,10 +88,10 @@ class GEEImageReader:
     description="Google Earth Engine connection from the GEE Connector node.",
     port_type=google_earth_engine_port_type,
 )
-@knext.output_binary(
-    name="GEE Image",
-    description="The output aggregated GEE Image.",
-    id="geemap.gee.Image",
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded aggregated image object.",
+    port_type=google_earth_engine_port_type,
 )
 class GEEImageCollectionReader:
     """Loads and aggregates multiple images from a Google Earth Engine image collection based on date range and aggregation method.
@@ -187,18 +163,13 @@ class GEEImageCollectionReader:
 
         LOGGER = logging.getLogger(__name__)
 
-        # Get credentials and project ID from connection
-        credentials = gee_connection.credentials
-        project_id = gee_connection.spec.project_id
-
-        # Initialize GEE
-        ee.Initialize(credentials=credentials, project=project_id)
+        # GEE is already initialized in the same Python process from the connection
 
         # Parse dates
         start_date = datetime.strptime(self.start_date, "%Y-%m-%d")
         end_date = start_date + timedelta(days=self.date_span)
 
-        LOGGER.warning(f"Filtering collection from {start_date} to {end_date}")
+        # LOGGER.warning(f"Filtering collection from {start_date} to {end_date}")
 
         # Filter image collection by date
         image_collection = ee.ImageCollection(self.collection_id).filterDate(
@@ -228,9 +199,7 @@ class GEEImageCollectionReader:
             )
             image = image_collection.first()
 
-        # Export with credentials
-        output_binary = knut.gee_export_init(image, credentials, project_id)
-        return output_binary
+        return knut.export_gee_connection(image, gee_connection)
 
 
 @knext.node(
@@ -240,15 +209,15 @@ class GEEImageCollectionReader:
     icon_path=__NODE_ICON_PATH + "manipulator.png",
     after="",
 )
-@knext.input_binary(
-    name="GEE Image",
-    description="The input GEE Image.",
-    id="geemap.gee.Image",
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=google_earth_engine_port_type,
 )
-@knext.output_binary(
-    name="GEE Image",
-    description="The filtered GEE Image.",
-    id="geemap.gee.Image",
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with filtered image object.",
+    port_type=google_earth_engine_port_type,
 )
 class BandSelector:
     """Filters and selects specific bands from a Google Earth Engine image.
@@ -282,15 +251,16 @@ class BandSelector:
     def execute(
         self,
         exec_context: knext.ExecutionContext,
-        input_binary,
+        image_connection,
     ):
         import ee
         import logging
 
         LOGGER = logging.getLogger(__name__)
 
-        # Use the standardized import function
-        credentials, project_id, image = knut.gee_import_init(input_binary, LOGGER)
+        # Get image directly from connection object
+        # No need to initialize GEE - it's already initialized in the same Python process!
+        image = image_connection.gee_object
 
         # Get original image info for logging
         original_info = image.getInfo()
@@ -311,9 +281,7 @@ class BandSelector:
             )
             # If no bands match, return original image
 
-        # Export with credentials
-        output = knut.gee_export_init(image, credentials, project_id)
-        return output
+        return knut.export_gee_connection(image, image_connection)
 
 
 @knext.node(
@@ -327,10 +295,10 @@ class BandSelector:
     name="Input Table",
     description="Table containing ID, latitude, and longitude columns",
 )
-@knext.input_binary(
-    name="GEE Image",
-    description="The input GEE Image.",
-    id="geemap.gee.Image",
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=google_earth_engine_port_type,
 )
 @knext.output_table(
     name="Output Table",
@@ -389,7 +357,7 @@ class GetImageValueByLatLon:
         self,
         exec_context: knext.ExecutionContext,
         input_table: knext.Table,
-        input_binary,
+        image_connection,
     ):
         import ee
         import logging
@@ -397,8 +365,9 @@ class GetImageValueByLatLon:
 
         LOGGER = logging.getLogger(__name__)
 
-        # Use the standardized import function
-        credentials, project_id, image = knut.gee_import_init(input_binary, LOGGER)
+        # Get image directly from connection object
+        # No need to initialize GEE - it's already initialized in the same Python process!
+        image = image_connection.gee_object
 
         # Convert input table to pandas DataFrame
         df = input_table.to_pandas()
@@ -452,10 +421,10 @@ class GetImageValueByLatLon:
     icon_path=__NODE_ICON_PATH + "io.png",
     after="",
 )
-@knext.input_binary(
-    name="GEE Feature Collection",
-    description="The input  GEE Feature Collection.",
-    id="geemap.gee.FeatureCollection",
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with embedded feature collection object.",
+    port_type=google_earth_engine_port_type,
 )
 @knext.output_table(
     name="Output Table",
@@ -493,7 +462,7 @@ class FeatureCollectionToTable:
     def execute(
         self,
         exec_context: knext.ExecutionContext,
-        input_binary,
+        fc_connection,
     ):
         import ee
         import logging
@@ -502,8 +471,9 @@ class FeatureCollectionToTable:
 
         # LOGGER = logging.getLogger(__name__)
 
-        # Use the standardized import function for feature collection
-        credentials, project_id, feature_collection = knut.gee_import_init(input_binary)
+        # Get feature collection directly from connection object
+        # No need to initialize GEE - it's already initialized in the same Python process!
+        feature_collection = fc_connection.gee_object
 
         # LOGGER.warning(f"Converting Feature Collection to {self.file_format}")
 
@@ -541,10 +511,10 @@ class FeatureCollectionToTable:
     description="Google Earth Engine connection from the GEE Connector node.",
     port_type=google_earth_engine_port_type,
 )
-@knext.output_binary(
-    name="GEE Feature Collection",
-    description="The output  GEE Feature Collection.",
-    id="geemap.gee.FeatureCollection",
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with embedded feature collection object.",
+    port_type=google_earth_engine_port_type,
 )
 class GeoTableToFeatureCollection:
     """Converts a local GeoTable to a Google Earth Engine FeatureCollection.
@@ -584,12 +554,7 @@ class GeoTableToFeatureCollection:
 
         LOGGER = logging.getLogger(__name__)
 
-        # Get credentials and project ID from connection
-        credentials = gee_connection.credentials
-        project_id = gee_connection.spec.project_id
-
-        # Initialize GEE with credentials and project
-        ee.Initialize(credentials=credentials, project=project_id)
+        # GEE is already initialized in the same Python process from the connection
 
         # Convert input table to pandas DataFrame
         df = input_table.to_pandas()
@@ -610,12 +575,7 @@ class GeoTableToFeatureCollection:
         # Convert to GEE Feature Collection
         feature_collection = geemap.gdf_to_ee(shp)
 
-        # Export with credentials
-        output_binary = knut.gee_export_init(
-            feature_collection, credentials, project_id
-        )
-
-        return output_binary
+        return knut.export_gee_connection(feature_collection, gee_connection)
 
 
 @knext.node(
@@ -629,10 +589,10 @@ class GeoTableToFeatureCollection:
     name="Input GeoTable",
     description="Table containing geometry column for zonal statistics",
 )
-@knext.input_binary(
-    name="GEE Image",
-    description="The input GEE Image.",
-    id="geemap.gee.Image",
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=google_earth_engine_port_type,
 )
 @knext.output_table(
     name="Output Table",
@@ -724,7 +684,7 @@ class LocalGeoTableReducer:
         self,
         exec_context: knext.ExecutionContext,
         input_table: knext.Table,
-        input_binary,
+        image_connection,
     ):
         import ee
 
@@ -732,8 +692,9 @@ class LocalGeoTableReducer:
         import geemap
         import pandas as pd
 
-        # Use the standardized import function for image
-        credentials, project_id, image = knut.gee_import_init(input_binary)
+        # Get image directly from connection object
+        # No need to initialize GEE - it's already initialized in the same Python process!
+        image = image_connection.gee_object
 
         # Map each reduction method to its corresponding ee.Reducer
         reducer_map = {

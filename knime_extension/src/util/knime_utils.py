@@ -310,56 +310,58 @@ def check_canceled(exec_context: knext.ExecutionContext) -> None:
 ############################################
 # GEE helper
 ############################################
-def gee_export_init(output, credentials, project_id):
+
+
+def create_gee_connection_object(gee_object, credentials, project_id):
     """
-    Export GEE data with credentials and project_id in a standardized format.
+    Create a standardized GEE connection object with embedded GEE object.
+
+    This function creates a GoogleEarthEngineConnectionObject that contains the GEE object,
+    credentials, and project ID. This ensures all connected nodes run in the same Python process
+    and share the GEE initialization state.
 
     Args:
-        output: The actual output data (image, feature collection, etc.)
+        gee_object: The GEE object (ee.Image, ee.FeatureCollection, etc.)
         credentials: GEE credentials object (optional)
         project_id: GEE project ID string (optional)
 
     Returns:
-        bytes: Pickled data in format [credentials, project_id, output]
+        GoogleEarthEngineConnectionObject: Connection object with embedded GEE object
     """
-    import pickle
-    import ee
+    from util.common import (
+        GoogleEarthEngineConnectionObject,
+        GoogleEarthEngineObjectSpec,
+    )
 
-    # Create standardized output format
-    output_data = [credentials, project_id, output]
+    # Create a new spec for the connection
+    spec = GoogleEarthEngineObjectSpec(project_id)
 
-    # Convert to binary
-    output_binary = pickle.dumps(output_data)
+    # Create connection object with embedded GEE object
+    connection_object = GoogleEarthEngineConnectionObject(
+        spec=spec, credentials=credentials, gee_object=gee_object
+    )
 
-    return output_binary
+    return connection_object
 
 
-def gee_import_init(input_binary, logger=None):
+def export_gee_connection(gee_object, existing_connection):
     """
-    Import GEE data and initialize GEE with credentials and project_id.
+    Export a GEE object as a connection object using credentials and project ID from an existing connection.
+
+    This function creates a GoogleEarthEngineConnectionObject that contains the GEE object,
+    using the credentials and project ID from an existing connection. This ensures all connected
+    nodes run in the same Python process and share the GEE initialization state.
 
     Args:
-        input_binary: Pickled data in format [credentials, project_id, output]
-        logger: Optional logger for debug information
+        gee_object: The GEE object (ee.Image, ee.FeatureCollection, etc.)
+        existing_connection: Existing GoogleEarthEngineConnectionObject to get credentials and project_id from
 
     Returns:
-        tuple: (credentials, project_id, output)
-        - credentials: GEE credentials object or None
-        - project_id: GEE project ID string or None
-        - output: The actual output data
+        GoogleEarthEngineConnectionObject: Connection object with embedded GEE object
     """
-    import pickle
-    import ee
+    # Get credentials and project ID from existing connection
+    credentials = existing_connection.credentials
+    project_id = existing_connection.spec.project_id
 
-    # Load the data from binary
-    data = pickle.loads(input_binary)
-
-    credentials = data[0]
-    project_id = data[1]
-    input = data[2]
-
-    # Initialize GEE - simplified approach
-
-    ee.Initialize(credentials=credentials, project=project_id)
-
-    return credentials, project_id, input
+    # Use the existing function to create the new connection object
+    return create_gee_connection_object(gee_object, credentials, project_id)
