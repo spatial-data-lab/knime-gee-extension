@@ -368,41 +368,75 @@ class GEEFeatureCollectionFilter:
     def execute(self, exec_context: knext.ExecutionContext, fc_connection):
         import ee
         import logging
-        import util.knime_utils as knut
 
         LOGGER = logging.getLogger(__name__)
-        feature_collection = fc_connection.gee_object
+        feature_collection = ee.FeatureCollection(fc_connection.gee_object)
 
-        if self.property_name and self.property_value:
-            op_key = self.OPERATOR_CHOICES[self.filter_operator]
-            prop = self.property_name
-            val_str = str(self.property_value).strip()
+        # Only proceed if both property name and value are set
+        prop = (self.property_name or "").strip()
+        val_str = (self.property_value or "").strip()
 
-            val_num = ee.Number.parse(val_str)
-            eq_num = ee.Filter.eq(prop, val_num)
-            eq_str = ee.Filter.eq(prop, val_str)
-            eq_any = ee.Filter.Or(eq_num, eq_str)
-
-            if op_key == "eq":  # Equals
-                the_filter = eq_any
-
-            elif op_key == "neq":  # Not Equals
-                # Not(eq_num OR eq_str OR eq_str_lower)
+        if prop and val_str:
+            # Client-side check: is the value numeric?
+            def _to_float_or_none(s):
                 try:
-                    the_filter = ee.Filter.Not(eq_any)
+                    v = float(s)
+                    # Avoid NaN/Inf
+                    if v == float("inf") or v == float("-inf") or v != v:
+                        return None
+                    return v
                 except Exception:
-                    # not_；
-                    the_filter = ee.Filter.not_(eq_any)
+                    return None
 
-            elif op_key in ["gt", "gte", "lt", "lte"]:
+            val_float = _to_float_or_none(val_str)
+            has_numeric = val_float is not None
 
-                the_filter = {
-                    "gt": ee.Filter.gt,
-                    "gte": ee.Filter.gte,
-                    "lt": ee.Filter.lt,
-                    "lte": ee.Filter.lte,
-                }[op_key](prop, val_num)
+            # Filter out features with missing property to avoid comparison errors
+            feature_collection = feature_collection.filter(ee.Filter.notNull([prop]))
 
+            op_key = self.OPERATOR_CHOICES[self.filter_operator]
+            the_filter = None
+
+            # ============== Equals / Not Equals ==============
+            if op_key in ("eq", "neq"):
+                filters = []
+                # String equality
+                filters.append(ee.Filter.eq(prop, val_str))
+                # Numeric equality (only if value is actually numeric)
+                if has_numeric:
+                    filters.append(ee.Filter.eq(prop, ee.Number(val_float)))
+
+                if len(filters) == 1:
+                    eq_any = filters[0]
+                else:
+                    eq_any = ee.Filter.Or(filters[0], filters[1])
+
+                if op_key == "eq":
+                    the_filter = eq_any
+                else:
+                    # Not(eq_any)
+                    try:
+                        the_filter = ee.Filter.not_(eq_any)
+                    except Exception:
+                        the_filter = ee.Filter.Not(eq_any)
+
+            # ============== Numeric Comparisons ==============
+            elif op_key in ("gt", "gte", "lt", "lte"):
+                if not has_numeric:
+                    LOGGER.warning(
+                        f"Numeric operator '{op_key}' requires a numeric value, but got '{val_str}'. "
+                        "This filter will be skipped."
+                    )
+                else:
+                    cmp_func = {
+                        "gt": ee.Filter.gt,
+                        "gte": ee.Filter.gte,
+                        "lt": ee.Filter.lt,
+                        "lte": ee.Filter.lte,
+                    }[op_key]
+                    the_filter = cmp_func(prop, ee.Number(val_float))
+
+            # ============== String Operations ==============
             elif op_key == "stringContains":
                 the_filter = ee.Filter.stringContains(prop, val_str)
             elif op_key == "stringStartsWith":
@@ -410,32 +444,63 @@ class GEEFeatureCollectionFilter:
             elif op_key == "stringEndsWith":
                 the_filter = ee.Filter.stringEndsWith(prop, val_str)
 
+            # ============== inList (compatible with both strings and numbers) ==============
             elif op_key == "inList":
-                str_list = ee.List(
-                    [s.strip() for s in val_str.split(",") if s.strip() != ""]
-                )
-                num_list = str_list.map(lambda s: ee.Number.parse(s))
-                in_str = ee.Filter.inList(prop, str_list)
-                in_num = ee.Filter.inList(prop, num_list)
-                the_filter = ee.Filter.Or(in_str, in_num)
+                import re
 
-            else:
-                the_filter = None
+                # 1) Normalize: remove spaces and quotes, but preserve original string form (leading zeros, etc.)
+                tokens = [
+                    t.strip().strip('"').strip("'")
+                    for t in val_str.split(",")
+                    if t.strip()
+                ]
 
+                # 2) Always keep "string version" of the list (for string attributes / preserve leading zeros)
+                str_tokens = tokens
+
+                # 3) Only for "strict numeric" tokens, additionally build numeric list (for numeric attributes)
+                #    Strict numeric: can contain +/- and decimal point, but no leading/trailing whitespace or non-numeric chars
+                def _is_strict_numeric(s: str) -> bool:
+                    return re.fullmatch(r"[+-]?\d+(?:\.\d+)?", s) is not None
+
+                num_tokens = [float(t) for t in tokens if _is_strict_numeric(t)]
+
+                sub_filters = []
+                if str_tokens:
+                    sub_filters.append(ee.Filter.inList(prop, ee.List(str_tokens)))
+                if num_tokens:
+                    sub_filters.append(ee.Filter.inList(prop, ee.List(num_tokens)))
+
+                if len(sub_filters) == 1:
+                    the_filter = sub_filters[0]
+                elif len(sub_filters) == 2:
+                    the_filter = ee.Filter.Or(sub_filters[0], sub_filters[1])
+
+            # Apply filter only if we successfully built one
             if the_filter:
                 LOGGER.warning(f"Applying filter: {prop} {op_key} {val_str}")
                 feature_collection = feature_collection.filter(the_filter)
+            else:
+                LOGGER.warning(
+                    f"No valid filter built for: {prop} {op_key} {val_str}; skipping value filter."
+                )
 
+        # Limit number of features
         if self.max_features >= 0:
-            feature_collection = feature_collection.limit(self.max_features)
+            try:
+                feature_collection = feature_collection.limit(int(self.max_features))
+            except Exception as ex:
+                LOGGER.warning(f"Limit failed and was skipped: {ex}")
 
-        # Check if the result is empty and provide warning
+        # Check result size (triggers server-side evaluation)
         try:
-            result_size = feature_collection.size()
-            if result_size.getInfo() == 0:
+            result_size = feature_collection.size().getInfo()
+            if result_size == 0:
                 LOGGER.warning(
                     "Property filter operation resulted in empty FeatureCollection"
                 )
+            else:
+                LOGGER.warning(f"Filtered FeatureCollection size: {result_size}")
         except Exception as e:
             LOGGER.warning(f"Could not check result size: {e}")
 
@@ -609,3 +674,137 @@ class GEEFeatureCollectionSpatialFilter:
             LOGGER.warning(f"Could not check result size: {e}")
 
         return knut.export_gee_connection(result_fc, fc_connection)
+
+
+############################################
+# Feature Collection Info
+############################################
+
+
+@knext.node(
+    name="Feature Collection Info",
+    node_type=knext.NodeType.VISUALIZER,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "fcinfo.png",
+    after="",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with embedded feature collection object.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_table(
+    name="Feature Collection Info Table",
+    description="Table containing property names, types, and geometry information",
+)
+class GEEFeatureCollectionInfo:
+    """Displays property information about a Google Earth Engine Feature Collection in table format.
+
+    This node extracts and displays property names, their data types, and geometry type
+    from a Feature Collection in a structured table format. This is useful for data
+    exploration, understanding the structure of your vector data, and selecting
+    appropriate properties for further processing.
+
+    **Information Displayed:**
+
+    - **Property Names**: All available property/attribute names
+    - **Property Types**: Data types of each property (string, number, boolean, etc.)
+    - **Geometry Type**: Type of geometries in the collection
+
+    **Use Cases:**
+
+    - Explore and understand new datasets
+    - Verify data structure before analysis
+    - Select appropriate properties for filtering or visualization
+    - Check data quality and completeness
+    """
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+        import pandas as pd
+
+        LOGGER = logging.getLogger(__name__)
+        feature_collection = fc_connection.gee_object
+
+        try:
+            # --- Optimized Server-Side Analysis ---
+
+            # 1. Get a reference to the first feature without downloading it
+            first_feature = feature_collection.first()
+
+            # 2. Get property names and geometry type as server-side objects
+            prop_names = first_feature.propertyNames()
+            geom_type = first_feature.geometry().type()
+
+            # 3. Define a server-side function to get the type of a property
+            def get_prop_type(prop_name):
+                prop_value = first_feature.get(prop_name)
+                # ee.Algorithms.ObjectType efficiently gets the type as a string
+                return ee.Algorithms.ObjectType(prop_value)
+
+            # 4. Map the function over the property names to get a list of types
+            prop_types = prop_names.map(get_prop_type)
+
+            # 5. Combine names and types into a server-side dictionary
+            properties_info = ee.Dictionary.fromLists(prop_names, prop_types)
+
+            # 6. Combine everything into a final dictionary for one single download
+            all_info = ee.Dictionary(
+                {"properties": properties_info, "geometry_type": geom_type}
+            )
+
+            # 7. Make ONE fast getInfo() call to download the small summary
+            result_info = all_info.getInfo()
+
+            # --- Client-Side Table Creation (no changes needed here) ---
+
+            property_data = []
+            if "properties" in result_info and result_info["properties"]:
+                # The property types are already strings from ee.Algorithms.ObjectType
+                for prop_name, prop_type in result_info["properties"].items():
+                    property_data.append(
+                        {
+                            "Property Name": prop_name,
+                            "Property Type": prop_type.lower(),  # e.g., 'Number', 'String'
+                        }
+                    )
+            else:
+                property_data.append(
+                    {
+                        "Property Name": "No properties found",
+                        "Property Type": "N/A",
+                    }
+                )
+
+            # Add geometry type as a separate row
+            geometry_type = result_info.get("geometry_type", "Unknown")
+            property_data.append(
+                {
+                    "Property Name": "geometry",
+                    "Property Type": geometry_type,
+                }
+            )
+
+            df = pd.DataFrame(property_data)
+            return knext.Table.from_pandas(df)
+
+        except Exception as e:
+            # Handle cases where the collection might be empty
+            LOGGER.error(f"Failed to get Feature Collection info: {e}")
+            df = pd.DataFrame(
+                [
+                    {
+                        "Property Name": "Error",
+                        "Property Type": "Could not retrieve info. Collection might be empty or invalid.",
+                    }
+                ]
+            )
+            return knext.Table.from_pandas(df)

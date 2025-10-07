@@ -20,5 +20,5 @@ import nodes.classifier
 import nodes.cluster
 import nodes.visualize
 import nodes.dataset
-import nodes.dataio
+import nodes.imageio
 import nodes.featureio
