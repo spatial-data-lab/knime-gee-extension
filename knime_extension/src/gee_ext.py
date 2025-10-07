@@ -21,3 +21,4 @@ import nodes.cluster
 import nodes.visualize
 import nodes.dataset
 import nodes.dataio
+import nodes.featureio
