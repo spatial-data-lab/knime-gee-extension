@@ -9,7 +9,7 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="visualize",
-    name="Visualize",
+    name="GEE View",
     description="Visualize nodes for Google Earth Engine",
     icon="icons/visualize.png",
 )
