@@ -190,11 +190,6 @@ class ImageBandSelector:
     description="GEE Image connection with embedded image object.",
     port_type=google_earth_engine_port_type,
 )
-@knext.output_port(
-    name="GEE Image Connection",
-    description="GEE Image connection (pass-through).",
-    port_type=google_earth_engine_port_type,
-)
 @knext.output_view(
     name="Image Info View",
     description="HTML view showing detailed image information",
@@ -253,9 +248,7 @@ class ImageGetInfo:
             """
 
             LOGGER.warning("Successfully retrieved image information")
-            return knut.export_gee_connection(image, image_connection), knext.view_html(
-                html
-            )
+            return knext.view_html(html)
 
         except Exception as e:
             LOGGER.error(f"Failed to get image info: {e}")
@@ -266,14 +259,111 @@ class ImageGetInfo:
                 <p>Failed to retrieve image information: {str(e)}</p>
             </div>
             """
-            return knut.export_gee_connection(image, image_connection), knext.view_html(
-                error_html
-            )
+            return knext.view_html(error_html)
+
+
+############################################
+# Image Clip
+############################################
+
+
+@knext.node(
+    name="Image Clip",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageClip.png",
+    id="imageclip",
+    after="imageinfo",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.input_port(
+    name="Geometry",
+    description="Geometry to clip the image to (from GEE Feature Collection or Geometry).",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with clipped image object.",
+    port_type=google_earth_engine_port_type,
+)
+class ImageClip:
+    """Clips a Google Earth Engine image to a specific geometry.
+
+    This node clips a GEE image to the boundaries of a provided geometry,
+    which can be a feature collection, feature, or geometry object. This is useful
+    for focusing analysis on specific regions of interest and reducing processing time
+    and data size.
+
+    **Use Cases:**
+
+    - Extract image data for a specific study area
+    - Prepare images for export by limiting to area of interest
+    - Reduce processing time by clipping to smaller regions
+    - Create regional mosaics or composites
+
+    **Input Geometry Types:**
+
+    - **Feature Collection**: Uses the geometry of the entire collection
+    - **Feature**: Uses the geometry of the feature
+    - **Geometry**: Uses the geometry directly
+
+    **Performance Notes:**
+
+    - Clipping reduces the area to process, improving performance
+    - Especially useful before exporting images
+    - Can significantly reduce export file size
+    """
+
+    def configure(self, configure_context, input_schema_1, input_schema_2):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+        geometry_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get image from connection
+        image = image_connection.gee_object
+
+        # Get geometry from connection
+        geometry_obj = geometry_connection.gee_object
+
+        # Handle different geometry types
+        if isinstance(geometry_obj, ee.FeatureCollection):
+            geometry = geometry_obj.geometry()
+        elif isinstance(geometry_obj, ee.Feature):
+            geometry = geometry_obj.geometry()
+        elif isinstance(geometry_obj, ee.Geometry):
+            geometry = geometry_obj
+        else:
+            # Try to extract geometry
+            geometry = ee.Geometry(geometry_obj)
+
+        # Clip the image
+        clipped_image = image.clip(geometry)
+
+        LOGGER.warning("Successfully clipped image to geometry")
+        return knut.export_gee_connection(clipped_image, image_connection)
 
 
 ############################################
 # Image Exporter
 ############################################
+
+
+def validate_output_path(path: str) -> None:
+    """Validator for output file path - accepts all paths."""
+    pass
 
 
 @knext.node(
@@ -282,7 +372,7 @@ class ImageGetInfo:
     category=__category,
     icon_path=__NODE_ICON_PATH + "ExportImage.png",
     id="imageexporter",
-    after="imageinfo",
+    after="imageclip",
 )
 @knext.input_port(
     name="GEE Image Connection",
@@ -322,10 +412,11 @@ class ImageExporter:
     - Consider using appropriate scale for your analysis needs
     """
 
-    output_path = knext.StringParameter(
+    output_path = knext.LocalPathParameter(
         "Output Path",
         "Local file path for the exported image (include file extension, e.g., 'output.tif')",
-        default_value="exported_image.tif",
+        placeholder_text="Select output file path...",
+        validator=validate_output_path,
     )
 
     scale = knext.IntParameter(
@@ -336,6 +427,12 @@ class ImageExporter:
         max_value=10000,
     )
 
+    wait_for_completion = knext.BoolParameter(
+        "Wait for Download Completion",
+        "If enabled, the node will wait until the file is fully downloaded before completing.",
+        default_value=True,
+    )
+
     def configure(self, configure_context, input_schema):
         return None
 
@@ -344,32 +441,73 @@ class ImageExporter:
         import geemap
         import logging
         import os
+        import time
 
         LOGGER = logging.getLogger(__name__)
 
-        try:
-            # Get image from connection (GEE already initialized)
-            image = image_connection.gee_object
+        # Get image from connection (GEE already initialized)
+        image = image_connection.gee_object
 
-            # Ensure output directory exists
-            output_dir = os.path.dirname(self.output_path)
-            if output_dir and not os.path.exists(output_dir):
-                os.makedirs(output_dir)
+        # Ensure output directory exists
+        output_dir = os.path.dirname(self.output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            LOGGER.info(f"Created output directory: {output_dir}")
 
-            # Export image using geemap
-            geemap.ee_export_image(
-                image,
-                filename=self.output_path,
-                scale=self.scale,
-                region=image.geometry(),
-            )
+        LOGGER.info(f"Starting image export to: {self.output_path}")
+        LOGGER.info(f"Export scale: {self.scale} meters per pixel")
 
-            LOGGER.warning(f"Successfully exported image to: {self.output_path}")
-            LOGGER.warning(f"Export scale: {self.scale} meters per pixel")
+        # Get image geometry for the export region
+        region = image.geometry()
+        fileurl = knut.ensure_file_extension(self.output_path, ".tiff")
 
-        except Exception as e:
-            LOGGER.error(f"Image export failed: {e}")
-            raise
+        # Export image using geemap with explicit parameters
+        geemap.ee_export_image(
+            image,
+            filename=fileurl,
+            scale=self.scale,
+            region=region,
+            file_per_band=False,  # Export all bands to single file
+        )
+
+        # Wait for download completion if enabled
+        if self.wait_for_completion:
+            LOGGER.info("Waiting for file download to complete...")
+            start_time = time.time()
+            last_size = 0
+            stable_count = 0
+            check_interval = 1  # Check every 1 seconds
+
+            while True:
+                elapsed_time = time.time() - start_time
+
+                # Check if file exists
+                if os.path.exists(fileurl):
+                    current_size = os.path.getsize(fileurl)
+
+                    # Check if file size is stable (not growing)
+                    if current_size == last_size and current_size > 0:
+                        stable_count += 1
+                        # If size stable for 3 checks (6 seconds), consider complete
+                        if stable_count >= 3:
+                            LOGGER.warning(
+                                f"✓ Download completed! File: {fileurl} (Size: {current_size / 1024:.2f} KB, Time: {elapsed_time:.1f}s)"
+                            )
+                            break
+                    else:
+                        stable_count = 0
+                        LOGGER.info(
+                            f"Downloading... Current size: {current_size / 1024:.2f} KB (elapsed: {elapsed_time:.1f}s)"
+                        )
+
+                    last_size = current_size
+                else:
+                    LOGGER.info(
+                        f"Waiting for file to appear... (elapsed: {elapsed_time:.1f}s)"
+                    )
+
+                # Wait before next check
+                time.sleep(check_interval)
 
 
 ############################################
@@ -446,48 +584,27 @@ class GeoTiffToGEEImage:
 
         LOGGER = logging.getLogger(__name__)
 
-        try:
-            # Validate file path
-            if not self.local_tiff_path or not os.path.exists(self.local_tiff_path):
-                raise FileNotFoundError(
-                    f"GeoTIFF file not found: {self.local_tiff_path}"
-                )
+        # Validate file path
+        if not self.local_tiff_path or not os.path.exists(self.local_tiff_path):
+            raise FileNotFoundError(f"GeoTIFF file not found: {self.local_tiff_path}")
 
-            # Convert local GeoTIFF to GEE image
-            image = geemap.tif_to_ee(self.local_tiff_path)
+        # Convert local GeoTIFF to GEE image
+        image = geemap.tif_to_ee(self.local_tiff_path)
 
-            # Get basic image information for display
-            info = image.getInfo()
-            json_string = json.dumps(info, indent=2)
+        # Get basic image information for display
+        info = image.getInfo()
+        json_string = json.dumps(info, indent=2)
 
-            # Create HTML view
-            html = f"""
-            <div style="font-family: monospace; font-size: 12px;">
-                <h3>Imported Image Information</h3>
-                <p><strong>File:</strong> {os.path.basename(self.local_tiff_path)}</p>
-                <pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto;">
-{json_string}
-                </pre>
-            </div>
-            """
+        # Create HTML view
+        html = f"""
+        <div style="font-family: monospace; font-size: 12px;">
+            <h3>Imported Image Information</h3>
+            <p><strong>File:</strong> {os.path.basename(self.local_tiff_path)}</p>
+            <pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto;">
+            {json_string}
+            </pre>
+        </div>
+        """
 
-            LOGGER.warning(f"Successfully imported GeoTIFF: {self.local_tiff_path}")
-            return knut.export_gee_connection(image, gee_connection), knext.view_html(
-                html
-            )
-
-        except Exception as e:
-            LOGGER.error(f"GeoTIFF import failed: {e}")
-            # Return error view
-            error_html = f"""
-            <div style="color: red; font-family: monospace;">
-                <h3>Import Error</h3>
-                <p>Failed to import GeoTIFF: {str(e)}</p>
-                <p><strong>File:</strong> {self.local_tiff_path}</p>
-            </div>
-            """
-            # Return a dummy image connection to maintain workflow continuity
-            dummy_image = ee.Image.constant(0)
-            return knut.export_gee_connection(
-                dummy_image, gee_connection
-            ), knext.view_html(error_html)
+        # LOGGER.warning(f"Successfully imported GeoTIFF: {self.local_tiff_path}")
+        return knut.export_gee_connection(image, gee_connection), knext.view_html(html)
