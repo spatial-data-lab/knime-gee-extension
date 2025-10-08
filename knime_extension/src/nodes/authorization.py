@@ -29,7 +29,7 @@ __NODE_ICON_PATH = "icons/icon/authorization/"
     name="Google Earth Engine Connector",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "authorization.png",
+    icon_path=__NODE_ICON_PATH + "Authenticate.png",
     keywords=[
         "Google",
         "Google Earth Engine",

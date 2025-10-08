@@ -16,69 +16,11 @@ __category = knext.category(
     level_id="imageio",
     name="Image IO",
     description="Google Earth Engine Image Input/Output and Processing nodes",
-    icon="icons/imageIO.png",
+    icon="icons/ImageIO.png",
 )
 
 # Node icon path
 __NODE_ICON_PATH = "icons/icon/image/"
-
-
-############################################
-# GEE Image Reader
-############################################
-
-
-@knext.node(
-    name="Image Reader",
-    node_type=knext.NodeType.SOURCE,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "imagereader.png",
-    after="",
-)
-@knext.input_port(
-    name="Google Earth Engine Connection",
-    description="Google Earth Engine connection from the GEE Connector node.",
-    port_type=google_earth_engine_port_type,
-)
-@knext.output_port(
-    name="GEE Image Connection",
-    description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
-)
-class GEEImageReader:
-    """Loads a single image from Google Earth Engine using the specified image ID.
-
-    This node allows you to access individual satellite images, elevation data, or other geospatial datasets from GEE's
-    extensive catalog for further analysis in KNIME workflows.
-
-    **Common Image Examples:**
-
-    - Elevation: 'USGS/SRTMGL1_003' (30m resolution)
-
-    - ESA Elevation: 'ESA/WorldCover/v100' (10m resolution)
-
-    - WorldPop Population: 'CIESIN/GPWv411/GPW_Population_Density' (30 arc-second)
-
-    - Global Forest: 'UMD/hansen/global_forest_change_2021_v1_9' (30m resolution)
-
-    - Global Settlement: 'WSF/WSF_v1' (10m resolution)
-    """
-
-    imagename = knext.StringParameter(
-        "Image Name",
-        "The name/ID of the GEE image to load (e.g., 'USGS/SRTMGL1_003')",
-        default_value="USGS/SRTMGL1_003",
-    )
-
-    def configure(self, configure_context, input_schema):
-        return None
-
-    def execute(self, exec_context: knext.ExecutionContext, gee_connection):
-        import ee
-
-        image = ee.Image(self.imagename)
-
-        return knut.export_gee_connection(image, gee_connection)
 
 
 ############################################
@@ -90,7 +32,7 @@ class GEEImageReader:
     name="Image Collection Reader",
     node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "icreader.png",
+    icon_path=__NODE_ICON_PATH + "ImageCollectionReader.png",
     after="",
 )
 @knext.input_port(
@@ -103,7 +45,7 @@ class GEEImageReader:
     description="GEE Image Collection connection with embedded collection object.",
     port_type=google_earth_engine_port_type,
 )
-class GEEImageCollectionReader:
+class ImageCollectionReader:
     """Loads an image collection from Google Earth Engine.
 
     This node loads an Image Collection from GEE's catalog without applying any filters or aggregations.
@@ -159,10 +101,10 @@ class GEEImageCollectionReader:
 
 
 @knext.node(
-    name="Image Collection Filter",
+    name="Image Collection General Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "icfilter.png",
+    icon_path=__NODE_ICON_PATH + "ImageCollectionFilter.png",
     after="",
 )
 @knext.input_port(
@@ -175,7 +117,7 @@ class GEEImageCollectionReader:
     description="Filtered GEE Image Collection connection.",
     port_type=google_earth_engine_port_type,
 )
-class ImageCollectionFilter:
+class ImageCollectionGeneralFilter:
     """Filters an Image Collection by date and cloud cover.
 
     This node provides temporal and cloud cover filtering capabilities for Image Collections.
@@ -432,7 +374,7 @@ class ImageCollectionFilter:
     name="Image Collection Value Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "icvaluefilter.png",
+    icon_path=__NODE_ICON_PATH + "ImageCollectionValueFilter.png",
     after="",
 )
 @knext.input_port(
@@ -530,29 +472,44 @@ class ImageCollectionValueFilter:
         prop_name = self.property_name.strip()
         val_str = self.property_value.strip()
 
-        # Apply filter based on operator
-        if self.property_operator in ["Equals", "Not Equals"]:
-            # For Equals/Not Equals, use robust type handling (numeric + string)
-            # Parse as number on server side
-            num_filter = ee.Filter.eq(prop_name, ee.Number.parse(val_str))
-            str_filter = ee.Filter.eq(prop_name, val_str)
+        # 【关键修正】Client-side check to determine if the value is numeric
+        is_numeric = False
+        numeric_value = None
+        try:
+            numeric_value = float(val_str)
+            # Avoid NaN/Inf
+            if (
+                numeric_value == float("inf")
+                or numeric_value == float("-inf")
+                or numeric_value != numeric_value
+            ):
+                is_numeric = False
+            else:
+                is_numeric = True
+        except ValueError:
+            is_numeric = False
 
-            if self.property_operator == "Equals":
-                # Match either numeric or string representation
-                image_collection = image_collection.filter(
-                    ee.Filter.Or(num_filter, str_filter)
+        the_filter = None
+
+        # Apply filter based on operator
+        if self.property_operator == "Equals":
+            # If numeric, compare as a number; otherwise, as a string.
+            if is_numeric:
+                the_filter = ee.Filter.eq(prop_name, numeric_value)
+            else:
+                the_filter = ee.Filter.eq(prop_name, val_str)
+
+        elif self.property_operator == "Not Equals":
+            if is_numeric:
+                the_filter = ee.Filter.neq(prop_name, numeric_value)
+            else:
+                the_filter = ee.Filter.neq(prop_name, val_str)
+
+        else:  # All other operators are numeric
+            if not is_numeric:
+                raise ValueError(
+                    f"Operator '{self.property_operator}' requires a numeric Property Value, but got '{val_str}'."
                 )
-            else:  # Not Equals
-                # Neither numeric nor string should match
-                image_collection = image_collection.filter(
-                    ee.Filter.And(
-                        ee.Filter.neq(prop_name, ee.Number.parse(val_str)),
-                        ee.Filter.neq(prop_name, val_str),
-                    )
-                )
-        else:
-            # For numeric comparisons, parse as number on server side
-            numeric_value = ee.Number.parse(val_str)
 
             operator_map = {
                 "Greater Than": ee.Filter.gt,
@@ -560,11 +517,11 @@ class ImageCollectionValueFilter:
                 "Greater or Equal": ee.Filter.gte,
                 "Less or Equal": ee.Filter.lte,
             }
-
             filter_func = operator_map[self.property_operator]
-            image_collection = image_collection.filter(
-                filter_func(prop_name, numeric_value)
-            )
+            the_filter = filter_func(prop_name, numeric_value)
+
+        # Apply the created filter to the collection
+        image_collection = image_collection.filter(the_filter)
 
         LOGGER.warning(
             f"Applied property filter: {prop_name} {self.property_operator} {val_str}"
@@ -593,7 +550,7 @@ class ImageCollectionValueFilter:
     name="Image Collection Spatial Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "icspatialfilter.png",
+    icon_path=__NODE_ICON_PATH + "ImageCollectionSpatialFilter.png",
     after="",
 )
 @knext.input_port(
@@ -705,7 +662,7 @@ class ImageCollectionSpatialFilter:
     name="Image Collection Aggregator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "icaggregator.png",
+    icon_path=__NODE_ICON_PATH + "ImageCollectionAggregator.png",
     after="",
 )
 @knext.input_port(
@@ -799,6 +756,64 @@ class ImageCollectionAggregator:
 
 
 ############################################
+# GEE Image Reader
+############################################
+
+
+@knext.node(
+    name="Image Reader",
+    node_type=knext.NodeType.SOURCE,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageReader.png",
+    after="",
+)
+@knext.input_port(
+    name="Google Earth Engine Connection",
+    description="Google Earth Engine connection from the GEE Connector node.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=google_earth_engine_port_type,
+)
+class ImageReader:
+    """Loads a single image from Google Earth Engine using the specified image ID.
+
+    This node allows you to access individual satellite images, elevation data, or other geospatial datasets from GEE's
+    extensive catalog for further analysis in KNIME workflows.
+
+    **Common Image Examples:**
+
+    - Elevation: 'USGS/SRTMGL1_003' (30m resolution)
+
+    - ESA Elevation: 'ESA/WorldCover/v100' (10m resolution)
+
+    - WorldPop Population: 'CIESIN/GPWv411/GPW_Population_Density' (30 arc-second)
+
+    - Global Forest: 'UMD/hansen/global_forest_change_2021_v1_9' (30m resolution)
+
+    - Global Settlement: 'WSF/WSF_v1' (10m resolution)
+    """
+
+    imagename = knext.StringParameter(
+        "Image Name",
+        "The name/ID of the GEE image to load (e.g., 'USGS/SRTMGL1_003')",
+        default_value="USGS/SRTMGL1_003",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, gee_connection):
+        import ee
+
+        image = ee.Image(self.imagename)
+
+        return knut.export_gee_connection(image, gee_connection)
+
+
+############################################
 # Image Band Selector
 ############################################
 
@@ -807,7 +822,7 @@ class ImageCollectionAggregator:
     name="Image Band Selector",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "bandselector.png",
+    icon_path=__NODE_ICON_PATH + "BandSelector.png",
     after="",
 )
 @knext.input_port(
@@ -820,7 +835,7 @@ class ImageCollectionAggregator:
     description="GEE Image connection with filtered image object.",
     port_type=google_earth_engine_port_type,
 )
-class BandSelector:
+class ImageBandSelector:
     """Filters and selects specific bands from a Google Earth Engine image.
 
     This node allows you to filter and select specific bands from a Google Earth Engine image, allowing you to focus on relevant spectral information and reduce data size.
@@ -887,340 +902,432 @@ class BandSelector:
 
 
 ############################################
-# Get Image Value by LatLon
+# Dataset Search
 ############################################
 
 
 @knext.node(
-    name="Get Image Value by LatLon",
-    node_type=knext.NodeType.MANIPULATOR,
+    name="GEE Dataset Search",
+    node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "getvalue.png",
+    icon_path=__NODE_ICON_PATH + "DatasetSearch.png",
     after="",
 )
-@knext.input_table(
-    name="Input Table",
-    description="Table containing ID, latitude, and longitude columns",
+@knext.input_port(
+    name="Google Earth Engine Connection",
+    description="Google Earth Engine connection from the GEE Connector node.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_table(
+    name="Search Results",
+    description="Table containing search results from GEE data catalog",
+)
+class GEEDatasetSearch:
+    """Searches datasets from Google Earth Engine data catalog.
+
+    This node searches the Google Earth Engine data catalog for datasets matching your criteria.
+    It provides a powerful way to discover available satellite imagery, elevation data, and other
+    geospatial datasets in GEE's extensive catalog.
+
+    **Search Options:**
+
+    - **Keyword Search**: Search by dataset name, description, or tags
+    - **Source Filter**: Search in official GEE datasets, community datasets, or both
+    - **Regex Support**: Use regular expressions for advanced pattern matching
+
+    **Common Use Cases:**
+
+    - Discover available satellite imagery for your study area
+    - Find elevation or land cover datasets
+    - Search for specific sensor data (Sentinel, Landsat, MODIS, etc.)
+    - Explore community-contributed datasets
+
+    **Search Tips:**
+
+    - Use specific sensor names: "Sentinel-2", "Landsat", "MODIS"
+    - Search by data type: "elevation", "landcover", "precipitation"
+    - Use geographic terms: "global", "US", "Europe"
+    - Enable regex for pattern matching: "S2.*SR" for Sentinel-2 Surface Reflectance
+    """
+
+    search_keyword = knext.StringParameter(
+        "Search Keyword",
+        "The keyword to search from GEE data catalog (e.g., 'Sentinel-2', 'elevation', 'SRTM')",
+        default_value="Sentinel-2",
+    )
+
+    source = knext.StringParameter(
+        "Source",
+        "The source to search from GEE data catalog",
+        default_value="ee",
+        enum=["ee", "community", "all"],
+    )
+
+    use_regex = knext.BoolParameter(
+        "Use Regular Expression",
+        "Use regular expression for advanced pattern matching",
+        default_value=False,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, gee_connection):
+        import pandas as pd
+        from geemap import common as cm
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            # Search GEE data catalog
+            search_result = cm.search_ee_data(
+                self.search_keyword, regex=self.use_regex, source=self.source
+            )
+
+            if search_result:
+                df = pd.DataFrame(search_result)
+                LOGGER.warning(
+                    f"Found {len(df)} datasets matching '{self.search_keyword}'"
+                )
+            else:
+                # Return empty DataFrame with expected columns if no results
+                df = pd.DataFrame(
+                    columns=[
+                        "id",
+                        "title",
+                        "provider",
+                        "tags",
+                        "start_date",
+                        "end_date",
+                    ]
+                )
+                LOGGER.warning(f"No datasets found matching '{self.search_keyword}'")
+
+            return knext.Table.from_pandas(df)
+
+        except Exception as e:
+            LOGGER.error(f"Dataset search failed: {e}")
+            # Return empty DataFrame on error
+            df = pd.DataFrame(
+                columns=["id", "title", "provider", "tags", "start_date", "end_date"]
+            )
+            return knext.Table.from_pandas(df)
+
+
+############################################
+# Image Get Info
+############################################
+
+
+@knext.node(
+    name="Image Get Info",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageGetInfo.png",
+    after="",
 )
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
     port_type=google_earth_engine_port_type,
 )
-@knext.output_table(
-    name="Output Table",
-    description="Table with ID and extracted image values for each band",
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection (pass-through).",
+    port_type=google_earth_engine_port_type,
 )
-class GetImageValueByLatLon:
-    """Extracts pixel values from a Google Earth Engine image at specified latitude/longitude coordinates.
+@knext.output_view(
+    name="Image Info View",
+    description="HTML view showing detailed image information",
+)
+class ImageGetInfo:
+    """Displays detailed information about a Google Earth Engine image.
 
-    This node extracts pixel values from a Google Earth Engine image at specified latitude/longitude coordinates,
-    creating a table with extracted values for each point. This node is useful for creating point-based datasets for statistical analysis,
-    sampling remote sensing data for ground truth validation, and generating training data for machine learning models.
-    The node uses efficient batch processing to handle large numbers of points quickly.
+    This node extracts and displays comprehensive metadata about a GEE image including
+    band information, properties, geometry, and other technical details. This is useful
+    for understanding image structure before processing, verifying band names and properties,
+    and debugging image-related issues.
 
-    **Input Requirements:**
+    **Information Displayed:**
 
-    - Table must contain ID, latitude, and longitude columns
+    - **Band Information**: Names, types, and properties of all bands
+    - **Image Properties**: Metadata, acquisition date, cloud cover, etc.
+    - **Geometry**: Bounding box and projection information
+    - **System Properties**: GEE internal properties and identifiers
 
-    - Coordinates should be in decimal degrees (WGS84)
+    **Use Cases:**
 
-    - Scale parameter controls sampling resolution (default: 30m)
-
-    **Note:** Data transfer between local systems and Google Earth Engine cloud is subject to GEE's transmission limits.
-    For large datasets (thousands of points), consider processing in smaller batches to avoid data limit errors.
+    - Explore image structure and available bands
+    - Verify image properties before analysis
+    - Debug image processing issues
+    - Understand image metadata and acquisition parameters
     """
 
-    id_column = knext.ColumnParameter(
-        "ID Column",
-        "Column containing unique identifiers for each point",
-        port_index=0,
-    )
+    def configure(self, configure_context, input_schema):
+        return None
 
-    latitude_column = knext.ColumnParameter(
-        "Latitude Column",
-        "Column containing latitude values",
-        port_index=0,
-    )
+    def execute(self, exec_context: knext.ExecutionContext, image_connection):
+        import ee
+        import json
+        import logging
 
-    longitude_column = knext.ColumnParameter(
-        "Longitude Column",
-        "Column containing longitude values",
-        port_index=0,
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            # Get image from connection (GEE already initialized)
+            image = image_connection.gee_object
+
+            # Get image information efficiently
+            info = image.getInfo()
+
+            # Format as JSON for display
+            json_string = json.dumps(info, indent=2)
+
+            # Create HTML view
+            html = f"""
+            <div style="font-family: monospace; font-size: 12px;">
+                <h3>Image Information</h3>
+                <pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto;">
+{json_string}
+                </pre>
+            </div>
+            """
+
+            LOGGER.warning("Successfully retrieved image information")
+            return knut.export_gee_connection(image, image_connection), knext.view_html(
+                html
+            )
+
+        except Exception as e:
+            LOGGER.error(f"Failed to get image info: {e}")
+            # Return error view
+            error_html = f"""
+            <div style="color: red; font-family: monospace;">
+                <h3>Error</h3>
+                <p>Failed to retrieve image information: {str(e)}</p>
+            </div>
+            """
+            return knut.export_gee_connection(image, image_connection), knext.view_html(
+                error_html
+            )
+
+
+############################################
+# Image Exporter
+############################################
+
+
+@knext.node(
+    name="Image Exporter",
+    node_type=knext.NodeType.SINK,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ExportImage.png",
+    after="",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=google_earth_engine_port_type,
+)
+class ImageExporter:
+    """Exports a Google Earth Engine image to local storage.
+
+    This node exports a GEE image to your local file system in various formats.
+    It handles the export process efficiently and provides options for controlling
+    the export resolution and file format.
+
+    **Export Options:**
+
+    - **Output Path**: Specify the local file path for the exported image
+    - **Scale**: Control the export resolution (meters per pixel)
+    - **Format**: Automatically determined by file extension
+
+    **Supported Formats:**
+
+    - **GeoTIFF**: .tif, .tiff (recommended for most use cases)
+    - **JPEG**: .jpg, .jpeg (for visualization)
+    - **PNG**: .png (for visualization)
+
+    **Use Cases:**
+
+    - Export processed images for further analysis in other software
+    - Create high-resolution maps for presentations
+    - Generate base maps for GIS applications
+    - Export classification results or derived products
+
+    **Performance Notes:**
+
+    - Larger scale values (lower resolution) export faster
+    - Very high resolution exports may take considerable time
+    - Consider using appropriate scale for your analysis needs
+    """
+
+    output_path = knext.StringParameter(
+        "Output Path",
+        "Local file path for the exported image (include file extension, e.g., 'output.tif')",
+        default_value="exported_image.tif",
     )
 
     scale = knext.IntParameter(
         "Scale (meters)",
-        "The scale in meters to use for sampling. Lower values provide higher resolution but may be slower.",
+        "The scale in meters per pixel for export (lower = higher resolution)",
         default_value=30,
         min_value=1,
         max_value=10000,
     )
 
-    def configure(self, configure_context, input_table_schema, input_binary_spec):
+    def configure(self, configure_context, input_schema):
         return None
 
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        input_table: knext.Table,
-        image_connection,
-    ):
+    def execute(self, exec_context: knext.ExecutionContext, image_connection):
         import ee
+        import geemap
         import logging
-        import pandas as pd
+        import os
 
         LOGGER = logging.getLogger(__name__)
 
-        # Get image directly from connection object
-        # No need to initialize GEE - it's already initialized in the same Python process!
-        image = image_connection.gee_object
+        try:
+            # Get image from connection (GEE already initialized)
+            image = image_connection.gee_object
 
-        # Convert input table to pandas DataFrame
-        df = input_table.to_pandas()
+            # Ensure output directory exists
+            output_dir = os.path.dirname(self.output_path)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir)
 
-        # Get image info to determine bands (optimized to only get band names)
-        band_names = image.bandNames().getInfo()
-
-        # LOGGER.warning(f"Processing {len(df)} points with {len(band_names)} bands")
-
-        features = []
-        for idx, row in df.iterrows():
-            pt = ee.Geometry.Point(
-                [float(row[self.longitude_column]), float(row[self.latitude_column])]
+            # Export image using geemap
+            geemap.ee_export_image(
+                image,
+                filename=self.output_path,
+                scale=self.scale,
+                region=image.geometry(),
             )
-            features.append(ee.Feature(pt, {"id": str(row[self.id_column])}))
-        points_fc = ee.FeatureCollection(features)
 
-        sampled = image.sampleRegions(
-            collection=points_fc,
-            properties=["id"],
-            scale=self.scale,
-            geometries=True,
-        )
+            LOGGER.warning(f"Successfully exported image to: {self.output_path}")
+            LOGGER.warning(f"Export scale: {self.scale} meters per pixel")
 
-        sampled_info = sampled.getInfo()
-
-        results = []
-        for feature in sampled_info["features"]:
-            point_id = feature["properties"]["id"]
-            band_values = {}
-
-            for band_name in band_names:
-                band_values[band_name] = feature["properties"].get(band_name, None)
-
-            results.append({"id": point_id, **band_values})
-
-        # Create output DataFrame
-        output_df = pd.DataFrame(results)
-
-        # LOGGER.warning(f"Successfully extracted values for {len(output_df)} points")
-
-        return knext.Table.from_pandas(output_df)
+        except Exception as e:
+            LOGGER.error(f"Image export failed: {e}")
+            raise
 
 
 ############################################
-# Local GeoTable Reducer
+# GeoTiff To GEE Image
 ############################################
 
 
 @knext.node(
-    name="Local GeoTable Reducer",
-    node_type=knext.NodeType.MANIPULATOR,
+    name="Local GeoTiff To GEE",
+    node_type=knext.NodeType.SOURCE,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "reducer.png",
+    icon_path=__NODE_ICON_PATH + "GeotiffToGEE.png",
     after="",
 )
-@knext.input_table(
-    name="Input GeoTable",
-    description="Table containing geometry column for zonal statistics",
-)
 @knext.input_port(
+    name="Google Earth Engine Connection",
+    description="Google Earth Engine connection from the GEE Connector node.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
     port_type=google_earth_engine_port_type,
 )
-@knext.output_table(
-    name="Output Table",
-    description="Table with zonal statistics for each geometry",
+@knext.output_view(
+    name="Image Info View",
+    description="HTML view showing imported image information",
 )
-class LocalGeoTableReducer:
-    """Performs zonal statistics on a Google Earth Engine image using local geometry data.
+class GeoTiffToGEEImage:
+    """Converts a local GeoTIFF file to a Google Earth Engine image.
 
-    This node performs zonal statistics on a Google Earth Engine image using local geometry data,
-    calculating statistical summaries for each polygon, line, or point feature.
-    This node is useful for calculating statistical summaries of raster values within vector boundaries,
-    performing area-based analysis like average NDVI per administrative unit, generating summary
-    statistics for environmental monitoring, and creating aggregated datasets for further analysis.
-    Data transfer between local systems and Google Earth Engine cloud is subject to GEE's transmission limits.
-    This node includes built-in batch processing functionality to handle large datasets efficiently.
+    This node uploads and converts a local GeoTIFF file to a GEE image object,
+    making it available for processing within GEE workflows. This is useful for
+    incorporating local data, custom analysis results, or external datasets into
+    GEE-based analysis.
 
-    **Statistical Methods:**
+    **Supported Formats:**
 
-    - **mean**: Average value within each geometry
+    - **GeoTIFF**: .tif, .tiff files with geographic information
+    - **Single Band**: Grayscale or single-band images
+    - **Multi-Band**: RGB, multispectral, or hyperspectral images
 
-    - **median**: Median value (robust to outliers)
+    **Use Cases:**
 
-    - **min/max**: Minimum/maximum values
+    - Upload custom classification results for further analysis
+    - Incorporate local survey data or field measurements
+    - Import external satellite imagery not available in GEE
+    - Upload processed results from other software for visualization
 
-    - **count**: Number of valid pixels
+    **Important Notes:**
 
-    - **sum**: Sum of all pixel values
-
-    - **stdDev**: Standard deviation
-
-    - **variance**: Statistical variance
-
-    **Performance Features:**
-
-    - **Batch Processing**: Handles large datasets by processing in chunks
-
-    - **Configurable Scale**: Control sampling resolution for accuracy vs. speed
-
-    - **Multiple Statistics**: Calculate several statistics simultaneously
-
+    - File must be in a supported geographic projection (preferably WGS84)
+    - Large files may take time to upload and process
+    - Ensure sufficient storage quota in your GEE account
+    - File path must be accessible from the KNIME environment
     """
 
-    geo_col = knext.ColumnParameter(
-        "Geometry Column",
-        "Column containing geometry data",
-        column_filter=knut.is_geo,
-        include_row_key=False,
-        include_none_column=False,
-        port_index=0,
+    local_tiff_path = knext.StringParameter(
+        "Local GeoTIFF Path",
+        "Full path to the local GeoTIFF file to upload",
+        default_value="",
     )
 
-    reducer_methods = knext.StringParameter(
-        "Reducer Methods",
-        "Comma-separated list of reduction methods (e.g., 'mean,min,max')",
-        default_value="mean",
-    )
-
-    image_scale = knext.IntParameter(
-        "Image Scale (meters)",
-        "The scale in meters for zonal statistics calculation",
-        default_value=1000,
-        min_value=1,
-        max_value=10000,
-    )
-
-    batch_boolean = knext.BoolParameter(
-        "Enable Batch Processing",
-        "Enable batch processing for large datasets",
-        default_value=False,
-    )
-
-    batch_size = knext.IntParameter(
-        "Batch Size",
-        "Number of features to process in each batch",
-        default_value=100,
-        min_value=1,
-        max_value=10000,
-    ).rule(knext.OneOf(batch_boolean, [True]), knext.Effect.SHOW)
-
-    def configure(self, configure_context, input_table_schema, input_binary_spec):
-        self.geo_col = knut.column_exists_or_preset(
-            configure_context, self.geo_col, input_table_schema, knut.is_geo
-        )  # Show batch_size parameter only when batch_boolean is True
-        if not self.batch_boolean:
-            self.batch_size = 100  # Reset to default when batch is disabled
+    def configure(self, configure_context, input_schema):
         return None
 
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        input_table: knext.Table,
-        image_connection,
-    ):
+    def execute(self, exec_context: knext.ExecutionContext, gee_connection):
         import ee
-
-        import geopandas as gp
         import geemap
-        import pandas as pd
+        import logging
+        import json
+        import os
 
-        # Get image directly from connection object
-        # No need to initialize GEE - it's already initialized in the same Python process!
-        image = image_connection.gee_object
+        LOGGER = logging.getLogger(__name__)
 
-        # Map each reduction method to its corresponding ee.Reducer
-        reducer_map = {
-            "min": ee.Reducer.min(),
-            "mean": ee.Reducer.mean(),
-            "median": ee.Reducer.median(),
-            "max": ee.Reducer.max(),
-            "count": ee.Reducer.count(),
-            "sum": ee.Reducer.sum(),
-            "stdDev": ee.Reducer.stdDev(),
-            "variance": ee.Reducer.variance(),
-        }
-
-        # Split the reducelist and create a combined reducer
-        reduce_methods = [method.strip() for method in self.reducer_methods.split(",")]
-
-        # Validate reducer methods
-        valid_methods = []
-        for method in reduce_methods:
-            if method in reducer_map:
-                valid_methods.append(method)
-
-        if not valid_methods:
-            raise ValueError("No valid reducer methods provided")
-
-        # Create combined reducer
-        reducers = reducer_map[valid_methods[0]]
-        for method in valid_methods[1:]:
-            reducers = reducers.combine(reducer2=reducer_map[method], sharedInputs=True)
-
-        # Create GeoDataFrame
-        shp = gp.GeoDataFrame(input_table.to_pandas(), geometry=self.geo_col)
-
-        # Ensure CRS is WGS84 (EPSG:4326)
-        if shp.crs is None:
-            shp.set_crs(epsg=4326, inplace=True)
-        else:
-            shp.to_crs(4326, inplace=True)
-
-        # Process based on batch setting
-        if self.batch_boolean:
-
-            def process_batch(batch):
-                feature_collection = geemap.gdf_to_ee(batch)
-                stats = image.reduceRegions(
-                    collection=feature_collection,
-                    reducer=reducers,
-                    scale=self.image_scale,
+        try:
+            # Validate file path
+            if not self.local_tiff_path or not os.path.exists(self.local_tiff_path):
+                raise FileNotFoundError(
+                    f"GeoTIFF file not found: {self.local_tiff_path}"
                 )
-                return geemap.ee_to_gdf(stats)
 
-            # Split into batches
-            batches = [
-                shp.iloc[i : i + self.batch_size]
-                for i in range(0, len(shp), self.batch_size)
-            ]
+            # Convert local GeoTIFF to GEE image
+            image = geemap.tif_to_ee(self.local_tiff_path)
 
-            # Process each batch
-            result_dfs = []
-            for i, batch in enumerate(batches):
+            # Get basic image information for display
+            info = image.getInfo()
+            json_string = json.dumps(info, indent=2)
 
-                result_dfs.append(process_batch(batch))
+            # Create HTML view
+            html = f"""
+            <div style="font-family: monospace; font-size: 12px;">
+                <h3>Imported Image Information</h3>
+                <p><strong>File:</strong> {os.path.basename(self.local_tiff_path)}</p>
+                <pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto;">
+{json_string}
+                </pre>
+            </div>
+            """
 
-            # Combine results
-            result_df = pd.concat(result_dfs, ignore_index=True)
-        else:
-
-            # Convert to GEE Feature Collection
-            feature_collection = geemap.gdf_to_ee(shp)
-
-            # Perform zonal statistics
-            stats = image.reduceRegions(
-                collection=feature_collection, reducer=reducers, scale=self.image_scale
+            LOGGER.warning(f"Successfully imported GeoTIFF: {self.local_tiff_path}")
+            return knut.export_gee_connection(image, gee_connection), knext.view_html(
+                html
             )
 
-            # Convert result to GeoDataFrame
-            result_df = geemap.ee_to_gdf(stats)
-
-        # Remove RowID column if present
-        if "<RowID>" in result_df.columns:
-            result_df = result_df.drop(columns=["<RowID>"])
-
-        return knext.Table.from_pandas(result_df)
+        except Exception as e:
+            LOGGER.error(f"GeoTIFF import failed: {e}")
+            # Return error view
+            error_html = f"""
+            <div style="color: red; font-family: monospace;">
+                <h3>Import Error</h3>
+                <p>Failed to import GeoTIFF: {str(e)}</p>
+                <p><strong>File:</strong> {self.local_tiff_path}</p>
+            </div>
+            """
+            # Return a dummy image connection to maintain workflow continuity
+            dummy_image = ee.Image.constant(0)
+            return knut.export_gee_connection(
+                dummy_image, gee_connection
+            ), knext.view_html(error_html)

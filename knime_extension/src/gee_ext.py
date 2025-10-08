@@ -8,17 +8,21 @@ category = knext.category(
     name="Google Earth Engine",
     description="Nodes for Google Earth Engine",
     # starting at the root folder of the extension_module parameter in the knime.yml file
-    icon="icons/knime-gee.png",
+    icon="icons/GEE.png",
 )
 
 
 # need import node files here
 import nodes.authorization
-import nodes.io
-import nodes.manipulator
-import nodes.classifier
-import nodes.cluster
-import nodes.visualize
-import nodes.dataset
 import nodes.imageio
 import nodes.featureio
+import nodes.tool
+import nodes.visualize
+
+import nodes.classifier
+
+# import nodes.cluster
+
+# import nodes.io
+# import nodes.manipulator
+# import nodes.dataset
