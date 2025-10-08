@@ -17,6 +17,7 @@ __category = knext.category(
     name="Feature Collection IO",
     description="Google Earth Engine Feature Collection Input/Output and Processing nodes",
     icon="icons/featureIO.png",
+    after="imageio",
 )
 
 # Node icon path
@@ -33,6 +34,7 @@ __NODE_ICON_PATH = "icons/icon/feature/"
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "fcreader.png",
+    id="fcreader",
     after="",
 )
 @knext.input_port(
@@ -99,178 +101,6 @@ class GEEFeatureCollectionReader:
 
 
 ############################################
-# Feature Collection to Table
-############################################
-@knext.node(
-    name="Feature Collection to Table",
-    node_type=knext.NodeType.MANIPULATOR,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "fc2table.png",
-    after="",
-)
-@knext.input_port(
-    name="GEE Feature Collection Connection",
-    description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
-)
-@knext.output_table(
-    name="Output Table",
-    description="Table converted from GEE Feature Collection",
-)
-class FeatureCollectionToTable:
-    """Converts a Google Earth Engine FeatureCollection to a local table.
-
-    This node converts a Google Earth Engine FeatureCollection to a KNIME table,
-    allowing you to work with GEE vector data in standard tabular format.
-    This node bridges GEE vector operations with KNIME's data processing capabilities,
-    making it useful for exporting classification results, converting GEE vector analysis outputs,
-    and processing GEE-generated point samples or administrative boundaries.
-
-    **Output Formats:**
-
-    - **DataFrame**: Standard tabular format with attribute data only
-
-    - **GeoDataFrame**: Tabular format with embedded geometry information
-
-    **Note:** Data transfer from Google Earth Engine cloud to local systems is subject to GEE's transmission limits.
-    For large FeatureCollections, using loop to process the data is recommended.
-    """
-
-    file_format = knext.StringParameter(
-        "Output Format",
-        "Format for the output table",
-        default_value="DataFrame",
-        enum=["DataFrame", "GeoDataFrame"],
-    )
-
-    def configure(self, configure_context, input_binary_spec):
-        return None
-
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        fc_connection,
-    ):
-        import ee
-        import logging
-        import pandas as pd
-        import geemap
-
-        # LOGGER = logging.getLogger(__name__)
-
-        # Get feature collection directly from connection object
-        # No need to initialize GEE - it's already initialized in the same Python process!
-        feature_collection = fc_connection.gee_object
-
-        # LOGGER.warning(f"Converting Feature Collection to {self.file_format}")
-
-        # Convert based on format
-        if self.file_format == "DataFrame":
-            df = geemap.ee_to_df(feature_collection)
-        else:  # GeoDataFrame
-            df = geemap.ee_to_gdf(feature_collection)
-
-        # Remove RowID column if present
-        if "<RowID>" in df.columns:
-            df = df.drop(columns=["<RowID>"])
-            # LOGGER.warning("Removed <RowID> column from output")
-
-        # LOGGER.warning(
-        #     f"Successfully converted Feature Collection to table with {len(df)} rows"
-        # )
-
-        return knext.Table.from_pandas(df)
-
-
-############################################
-# GeoTable to Feature Collection
-############################################
-
-
-@knext.node(
-    name="GeoTable to Feature Collection",
-    node_type=knext.NodeType.MANIPULATOR,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "table2fc.png",
-    after="",
-)
-@knext.input_table(
-    name="Input GeoTable",
-    description="Table containing geometry column for conversion to Feature Collection",
-)
-@knext.input_port(
-    name="Google Earth Engine Connection",
-    description="Google Earth Engine connection from the GEE Connector node.",
-    port_type=google_earth_engine_port_type,
-)
-@knext.output_port(
-    name="GEE Feature Collection Connection",
-    description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
-)
-class GeoTableToFeatureCollection:
-    """Converts a local GeoTable to a Google Earth Engine FeatureCollection.
-
-    This node converts a KNIME table containing geometry data to a Google Earth Engine FeatureCollection,
-    enabling vector data processing in GEE workflows. This node bridges local GIS data with GEE's processing capabilities,
-    making it useful for uploading study area boundaries, converting training samples for classification,
-    processing custom administrative boundaries, and working with field survey data or sampling points.
-
-    **Note:** Data transfer from local systems to Google Earth Engine cloud is subject to GEE's transmission limits.
-    For large geometry datasets, consider processing in smaller batches to avoid data limit errors.
-
-    """
-
-    geo_col = knext.ColumnParameter(
-        "Geometry Column",
-        "Column containing geometry data",
-        port_index=0,
-    )
-
-    def configure(self, configure_context, input_table_schema, input_schema):
-        self.geo_col = knut.column_exists_or_preset(
-            configure_context, self.geo_col, input_table_schema, knut.is_geo
-        )
-        return None
-
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        input_table: knext.Table,
-        gee_connection,
-    ):
-        import ee
-        import logging
-        import geopandas as gp
-        import geemap
-
-        LOGGER = logging.getLogger(__name__)
-
-        # GEE is already initialized in the same Python process from the connection
-
-        # Convert input table to pandas DataFrame
-        df = input_table.to_pandas()
-
-        # LOGGER.warning(f"Converting table with {len(df)} rows to Feature Collection")
-
-        # Create GeoDataFrame
-        shp = gp.GeoDataFrame(df, geometry=self.geo_col)
-
-        # Ensure CRS is WGS84 (EPSG:4326)
-        if shp.crs is None:
-            shp.set_crs(epsg=4326, inplace=True)
-        else:
-            shp.to_crs(4326, inplace=True)
-
-        # LOGGER.warning(f"GeoDataFrame CRS: {shp.crs}")
-
-        # Convert to GEE Feature Collection
-        feature_collection = geemap.gdf_to_ee(shp)
-
-        return knut.export_gee_connection(feature_collection, gee_connection)
-
-
-############################################
 # GEE Feature Collection Filter
 ############################################
 
@@ -280,7 +110,8 @@ class GeoTableToFeatureCollection:
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "valueFilter.png",
-    after="",
+    id="valuefilter",
+    after="fcreader",
 )
 @knext.input_port(
     name="GEE Feature Collection Connection",
@@ -517,7 +348,8 @@ class GEEFeatureCollectionFilter:
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "spatialFilter.png",
-    after="",
+    id="spatialfilter",
+    after="valuefilter",
 )
 @knext.input_port(
     name="Input Feature Collection",
@@ -686,7 +518,8 @@ class GEEFeatureCollectionSpatialFilter:
     node_type=knext.NodeType.VISUALIZER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "fcinfo.png",
-    after="",
+    id="fcinfo",
+    after="spatialfilter",
 )
 @knext.input_port(
     name="GEE Feature Collection Connection",
@@ -808,3 +641,177 @@ class GEEFeatureCollectionInfo:
                 ]
             )
             return knext.Table.from_pandas(df)
+
+
+############################################
+# Feature Collection to Table
+############################################
+@knext.node(
+    name="Feature Collection to Table",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "fc2table.png",
+    id="fc2table",
+    after="fcinfo",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with embedded feature collection object.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_table(
+    name="Output Table",
+    description="Table converted from GEE Feature Collection",
+)
+class FeatureCollectionToTable:
+    """Converts a Google Earth Engine FeatureCollection to a local table.
+
+    This node converts a Google Earth Engine FeatureCollection to a KNIME table,
+    allowing you to work with GEE vector data in standard tabular format.
+    This node bridges GEE vector operations with KNIME's data processing capabilities,
+    making it useful for exporting classification results, converting GEE vector analysis outputs,
+    and processing GEE-generated point samples or administrative boundaries.
+
+    **Output Formats:**
+
+    - **DataFrame**: Standard tabular format with attribute data only
+
+    - **GeoDataFrame**: Tabular format with embedded geometry information
+
+    **Note:** Data transfer from Google Earth Engine cloud to local systems is subject to GEE's transmission limits.
+    For large FeatureCollections, using loop to process the data is recommended.
+    """
+
+    file_format = knext.StringParameter(
+        "Output Format",
+        "Format for the output table",
+        default_value="DataFrame",
+        enum=["DataFrame", "GeoDataFrame"],
+    )
+
+    def configure(self, configure_context, input_binary_spec):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+        import pandas as pd
+        import geemap
+
+        # LOGGER = logging.getLogger(__name__)
+
+        # Get feature collection directly from connection object
+        # No need to initialize GEE - it's already initialized in the same Python process!
+        feature_collection = fc_connection.gee_object
+
+        # LOGGER.warning(f"Converting Feature Collection to {self.file_format}")
+
+        # Convert based on format
+        if self.file_format == "DataFrame":
+            df = geemap.ee_to_df(feature_collection)
+        else:  # GeoDataFrame
+            df = geemap.ee_to_gdf(feature_collection)
+
+        # Remove RowID column if present
+        if "<RowID>" in df.columns:
+            df = df.drop(columns=["<RowID>"])
+            # LOGGER.warning("Removed <RowID> column from output")
+
+        # LOGGER.warning(
+        #     f"Successfully converted Feature Collection to table with {len(df)} rows"
+        # )
+
+        return knext.Table.from_pandas(df)
+
+
+############################################
+# GeoTable to Feature Collection
+############################################
+
+
+@knext.node(
+    name="GeoTable to Feature Collection",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "table2fc.png",
+    id="table2fc",
+    after="fc2table",
+)
+@knext.input_table(
+    name="Input GeoTable",
+    description="Table containing geometry column for conversion to Feature Collection",
+)
+@knext.input_port(
+    name="Google Earth Engine Connection",
+    description="Google Earth Engine connection from the GEE Connector node.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with embedded feature collection object.",
+    port_type=google_earth_engine_port_type,
+)
+class GeoTableToFeatureCollection:
+    """Converts a local GeoTable to a Google Earth Engine FeatureCollection.
+
+    This node converts a KNIME table containing geometry data to a Google Earth Engine FeatureCollection,
+    enabling vector data processing in GEE workflows. This node bridges local GIS data with GEE's processing capabilities,
+    making it useful for uploading study area boundaries, converting training samples for classification,
+    processing custom administrative boundaries, and working with field survey data or sampling points.
+
+    **Note:** Data transfer from local systems to Google Earth Engine cloud is subject to GEE's transmission limits.
+    For large geometry datasets, consider processing in smaller batches to avoid data limit errors.
+
+    """
+
+    geo_col = knext.ColumnParameter(
+        "Geometry Column",
+        "Column containing geometry data",
+        port_index=0,
+    )
+
+    def configure(self, configure_context, input_table_schema, input_schema):
+        self.geo_col = knut.column_exists_or_preset(
+            configure_context, self.geo_col, input_table_schema, knut.is_geo
+        )
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        input_table: knext.Table,
+        gee_connection,
+    ):
+        import ee
+        import logging
+        import geopandas as gp
+        import geemap
+
+        LOGGER = logging.getLogger(__name__)
+
+        # GEE is already initialized in the same Python process from the connection
+
+        # Convert input table to pandas DataFrame
+        df = input_table.to_pandas()
+
+        # LOGGER.warning(f"Converting table with {len(df)} rows to Feature Collection")
+
+        # Create GeoDataFrame
+        shp = gp.GeoDataFrame(df, geometry=self.geo_col)
+
+        # Ensure CRS is WGS84 (EPSG:4326)
+        if shp.crs is None:
+            shp.set_crs(epsg=4326, inplace=True)
+        else:
+            shp.to_crs(4326, inplace=True)
+
+        # LOGGER.warning(f"GeoDataFrame CRS: {shp.crs}")
+
+        # Convert to GEE Feature Collection
+        feature_collection = geemap.gdf_to_ee(shp)
+
+        return knut.export_gee_connection(feature_collection, gee_connection)

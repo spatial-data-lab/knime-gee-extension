@@ -17,6 +17,7 @@ __category = knext.category(
     name="Tool",
     description="Google Earth Engine Tool and Utility nodes",
     icon="icons/tool.png",
+    after="visualize",
 )
 
 # Node icon path

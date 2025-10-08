@@ -12,6 +12,7 @@ __category = knext.category(
     name="GEE View",
     description="Visualize nodes for Google Earth Engine",
     icon="icons/visualize.png",
+    after="featureio",
 )
 
 # Root path for all node icons in this file

@@ -14,7 +14,8 @@ category = knext.category(
 
 # need import node files here
 import nodes.authorization
-import nodes.imageio
+import nodes.image
+import nodes.imagecollection
 import nodes.featureio
 import nodes.tool
 import nodes.visualize
