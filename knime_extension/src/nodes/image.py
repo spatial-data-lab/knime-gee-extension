@@ -30,7 +30,7 @@ __NODE_ICON_PATH = "icons/icon/image/"
 
 
 @knext.node(
-    name="Image Reader",
+    name="EE Image Reader",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageReader.png",
@@ -89,7 +89,7 @@ class ImageReader:
 
 
 @knext.node(
-    name="Image Band Selector",
+    name="EE Image Band Selector",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "BandSelector.png",
@@ -178,7 +178,7 @@ class ImageBandSelector:
 
 
 @knext.node(
-    name="Image Get Info",
+    name="EE Image Get Info",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageGetInfo.png",
@@ -268,7 +268,7 @@ class ImageGetInfo:
 
 
 @knext.node(
-    name="Image Clip",
+    name="EE Image Clip",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageClip.png",
@@ -367,7 +367,7 @@ def validate_output_path(path: str) -> None:
 
 
 @knext.node(
-    name="Image Exporter",
+    name="EE Image Exporter",
     node_type=knext.NodeType.SINK,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ExportImage.png",
