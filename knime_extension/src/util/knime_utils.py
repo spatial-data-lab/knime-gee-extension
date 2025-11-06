@@ -376,3 +376,463 @@ def export_gee_connection(gee_object, existing_connection):
 
     # Use the existing function to create the new connection object
     return create_gee_connection_object(gee_object, credentials, project_id)
+
+
+def batch_process_feature_collection_to_table(
+    feature_collection,
+    file_format="DataFrame",
+    batch_size=500,
+    logger=None,
+    exec_context=None,
+    total_size=None,
+):
+    """
+    Convert a Feature Collection to table using batch processing to handle GEE size limits.
+
+    Uses ee.FeatureCollection.toList() + getInfo() instead of geemap.ee_to_df()
+    to have better control over payload size and avoid payload limit errors.
+
+    Args:
+        feature_collection: ee.FeatureCollection to convert
+        file_format: "DataFrame" or "GeoDataFrame" (default: "DataFrame")
+        batch_size: Number of features per batch (default: 500)
+        logger: Optional logger instance for progress messages
+        exec_context: Optional ExecutionContext for progress updates
+        total_size: Optional total size (if known) for progress calculation
+
+    Returns:
+        pandas.DataFrame: Converted table with all features
+    """
+    import ee
+    import pandas as pd
+    import geopandas as gpd
+    from shapely.geometry import shape
+
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    # Try to get total size for progress display (optional)
+    if total_size is None:
+        try:
+            total_size = feature_collection.size().getInfo()
+            logger.warning(f"Feature Collection size: {total_size} features")
+        except Exception as size_error:
+            # Size check failed - that's OK, we'll use approximate progress
+            logger.warning(
+                f"Could not get collection size ({size_error}), will use approximate progress"
+            )
+            total_size = None
+
+    result_dfs = []
+
+    # Use user's batch_size (no automatic adjustment)
+    current_batch_size = batch_size
+    processed_count = 0
+    batch_num = 0
+    last_index = None
+
+    while True:
+        # Update progress
+        if exec_context is not None:
+            if total_size is not None:
+                # Precise progress when we know total size
+                progress = 0.1 + (processed_count / total_size) * 0.7
+                exec_context.set_progress(
+                    progress,
+                    f"Processing batch {batch_num + 1}... ({processed_count}/{total_size} features)",
+                )
+            else:
+                # Approximate progress when we don't know total size
+                progress = min(0.1 + (batch_num * 0.01), 0.8)
+                exec_context.set_progress(
+                    progress,
+                    f"Processing batch {batch_num + 1}... ({processed_count} features so far)",
+                )
+
+        try:
+            # Get a batch using limit() - no size check to avoid payload issues
+            if last_index is None:
+                batch_fc = feature_collection.limit(current_batch_size)
+            else:
+                batch_fc = feature_collection.filter(
+                    ee.Filter.gt("system:index", last_index)
+                ).limit(current_batch_size)
+
+            # Use toList() + getInfo() instead of geemap.ee_to_df()
+            # This gives us more control and can handle smaller batches
+            batch_list = batch_fc.toList(current_batch_size)
+            batch_features = batch_list.getInfo()
+
+            if not batch_features or len(batch_features) == 0:
+                break
+
+            # Manually convert features to DataFrame
+            rows = []
+            for feature in batch_features:
+                props = feature.get("properties", {})
+                geom = feature.get("geometry")
+
+                row = props.copy()
+
+                # Add geometry if needed for GeoDataFrame
+                if file_format == "GeoDataFrame" and geom:
+                    try:
+                        row["geometry"] = shape(geom)
+                    except Exception:
+                        # If geometry conversion fails, skip geometry
+                        pass
+
+                rows.append(row)
+
+            if len(rows) == 0:
+                break
+
+            # Create DataFrame
+            if file_format == "GeoDataFrame":
+                batch_df = gpd.GeoDataFrame(rows, crs="EPSG:4326")
+            else:
+                batch_df = pd.DataFrame(rows)
+                # Remove geometry column if present (shouldn't be, but just in case)
+                if "geometry" in batch_df.columns:
+                    batch_df = batch_df.drop(columns=["geometry"])
+
+            if len(batch_df) == 0:
+                break
+
+            # Get the last system:index for next iteration
+            if "system:index" in batch_df.columns:
+                batch_df_sorted = batch_df.sort_values("system:index")
+                last_index = batch_df_sorted["system:index"].iloc[-1]
+            else:
+                # No system:index - can't continue efficiently
+                logger.warning("No system:index found, stopping after this batch")
+                result_dfs.append(batch_df)
+                processed_count += len(batch_df)
+                break
+
+            result_dfs.append(batch_df)
+            processed_count += len(batch_df)
+            batch_num += 1
+
+            # If we got fewer features than batch_size, we're done
+            if len(batch_df) < current_batch_size:
+                break
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "payload" in error_msg or "limit" in error_msg:
+                # Don't adjust batch size - just raise error with helpful message
+                if result_dfs:
+                    # We have some results - return them and warn
+                    logger.warning(
+                        f"Payload limit error at batch {batch_num + 1}. "
+                        f"Returning {len(result_dfs)} batches processed so far."
+                    )
+                    logger.warning(
+                        f"Current batch size ({current_batch_size}) is too large. "
+                        f"Please reduce the batch size parameter and try again."
+                    )
+                    break
+                else:
+                    # No results yet - provide detailed error message
+                    if current_batch_size == 1:
+                        # Single feature exceeds limit - this is a data issue
+                        error_detail = (
+                            f"Even a single feature exceeds the payload limit (10MB). "
+                            f"This usually means:\n"
+                            f"1. Features contain too many attributes or very large attribute values\n"
+                            f"2. Features have very complex geometries\n"
+                            f"3. Features contain embedded data that exceeds limits\n\n"
+                            f"Suggestions:\n"
+                            f"- Use 'Feature Collection Filter' to select only needed properties\n"
+                            f"- Simplify geometries if possible\n"
+                            f"- Consider using GEE Export functionality instead of direct conversion\n"
+                            f"Original error: {e}"
+                        )
+                        raise ValueError(error_detail)
+                    else:
+                        # Batch size too large
+                        error_detail = (
+                            f"Batch size {current_batch_size} exceeds payload limit (10MB). "
+                            f"Please reduce the batch size parameter to a smaller value (e.g., {max(1, current_batch_size // 4)}) "
+                            f"and try again.\n"
+                            f"Original error: {e}"
+                        )
+                        raise ValueError(error_detail)
+            else:
+                # Other errors - raise immediately
+                raise
+
+    # Set final progress
+    if exec_context is not None:
+        exec_context.set_progress(0.8, "Combining results...")
+
+    # Combine all batches
+    if result_dfs:
+        df = pd.concat(result_dfs, ignore_index=True)
+        logger.warning(f"Processed {len(df)} features in {len(result_dfs)} batches")
+        return df
+    else:
+        raise ValueError("No batches were successfully processed")
+
+
+def _process_batch(
+    feature_collection,
+    offset,
+    current_batch_size,
+    file_format,
+    result_dfs,
+    logger,
+    batch_num,
+    total_batches,
+):
+    """Helper function to process a single batch"""
+    import ee
+    import geemap
+
+    # Get batch using toList - this returns ee.List
+    batch_list = feature_collection.toList(current_batch_size, offset)
+
+    # Convert ee.List to ee.FeatureCollection for geemap functions
+    batch_fc = ee.FeatureCollection(batch_list)
+
+    # Convert batch
+    try:
+        if file_format == "DataFrame":
+            batch_df = geemap.ee_to_df(batch_fc)
+        else:  # GeoDataFrame
+            batch_df = geemap.ee_to_gdf(batch_fc)
+
+        result_dfs.append(batch_df)
+        batch_display = (
+            f"{batch_num + 1}/{total_batches}" if total_batches else str(batch_num + 1)
+        )
+        logger.warning(f"Processed batch {batch_display} ({len(batch_df)} features)")
+    except Exception as e:
+        logger.warning(
+            f"Batch {batch_num + 1} failed: {e}, trying smaller batch size..."
+        )
+        # Try with smaller batches for this range
+        smaller_batch = max(current_batch_size // 2, 50)
+        sub_result_dfs = []
+
+        for j in range(offset, offset + current_batch_size, smaller_batch):
+            sub_batch_size = min(smaller_batch, offset + current_batch_size - j)
+            try:
+                sub_batch_list = feature_collection.toList(sub_batch_size, j)
+                sub_batch_fc = ee.FeatureCollection(sub_batch_list)
+                if file_format == "DataFrame":
+                    sub_df = geemap.ee_to_df(sub_batch_fc)
+                else:
+                    sub_df = geemap.ee_to_gdf(sub_batch_fc)
+                sub_result_dfs.append(sub_df)
+            except Exception as sub_error:
+                logger.warning(
+                    f"Sub-batch starting at {j} failed: {sub_error}, trying single features..."
+                )
+                # Try one feature at a time for this range
+                for k in range(j, min(j + sub_batch_size, offset + current_batch_size)):
+                    try:
+                        single_list = feature_collection.toList(1, k)
+                        single_fc = ee.FeatureCollection(single_list)
+                        if file_format == "DataFrame":
+                            single_df = geemap.ee_to_df(single_fc)
+                        else:
+                            single_df = geemap.ee_to_gdf(single_fc)
+                        sub_result_dfs.append(single_df)
+                    except Exception as single_error:
+                        logger.error(
+                            f"Failed to process single feature at index {k}: {single_error}"
+                        )
+                        # Skip this feature and continue
+                        continue
+
+        result_dfs.extend(sub_result_dfs)
+
+
+def batch_process_geodataframe_to_feature_collection(
+    gdf,
+    batch_size=500,
+    logger=None,
+    exec_context=None,
+):
+    """
+    Convert a GeoDataFrame to Feature Collection using batch processing to handle GEE upload limits.
+
+    This function processes GeoDataFrames in batches to avoid GEE's upload size limits.
+    It automatically handles errors by reducing batch size and provides detailed logging.
+
+    Args:
+        gdf: geopandas.GeoDataFrame to convert
+        batch_size: Number of features per batch (default: 500)
+        logger: Optional logger instance for progress messages
+        exec_context: Optional ExecutionContext for progress updates
+
+    Returns:
+        ee.FeatureCollection: Combined Feature Collection with all features
+    """
+    import ee
+    import geemap
+
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    total_size = len(gdf)
+    num_batches = (total_size + batch_size - 1) // batch_size
+
+    # Process in batches and combine Feature Collections
+    feature_collections = []
+
+    for i in range(num_batches):
+        # Update progress
+        if exec_context is not None:
+            progress = 0.1 + (i / num_batches) * 0.7
+            exec_context.set_progress(
+                progress, f"Processing batch {i + 1}/{num_batches}"
+            )
+
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, total_size)
+
+        # Get batch of features
+        batch_gdf = gdf.iloc[start_idx:end_idx].copy()
+
+        try:
+            # Convert batch to Feature Collection
+            batch_fc = geemap.gdf_to_ee(batch_gdf)
+            feature_collections.append(batch_fc)
+            # logger.warning(
+            #     f"Processed batch {i + 1}/{num_batches} ({len(batch_gdf)} features)"
+            # )
+        except Exception as e:
+            # logger.warning(f"Batch {i + 1} failed: {e}, trying smaller batch size...")
+            # Try with smaller batches for this range
+            smaller_batch = max(len(batch_gdf) // 2, 50)
+            sub_feature_collections = []
+
+            for j in range(start_idx, end_idx, smaller_batch):
+                sub_end_idx = min(j + smaller_batch, end_idx)
+                sub_batch_gdf = gdf.iloc[j:sub_end_idx].copy()
+
+                try:
+                    sub_batch_fc = geemap.gdf_to_ee(sub_batch_gdf)
+                    sub_feature_collections.append(sub_batch_fc)
+                except Exception as sub_error:
+                    # logger.warning(
+                    #     f"Sub-batch starting at {j} failed: {sub_error}, trying single features..."
+                    # )
+                    # Try one feature at a time for this range
+                    for k in range(j, sub_end_idx):
+                        try:
+                            single_gdf = gdf.iloc[k : k + 1].copy()
+                            single_fc = geemap.gdf_to_ee(single_gdf)
+                            sub_feature_collections.append(single_fc)
+                        except Exception as single_error:
+                            # logger.error(
+                            #     f"Failed to process single feature at index {k}: {single_error}"
+                            # )
+                            # Skip this feature and continue
+                            continue
+
+            feature_collections.extend(sub_feature_collections)
+
+    # Set final progress
+    if exec_context is not None:
+        exec_context.set_progress(0.8, "Combining Feature Collections...")
+
+    # Combine all Feature Collections into one
+    if feature_collections:
+        # Flatten all feature collections into a single list
+        all_features = []
+        for fc in feature_collections:
+            # Get features from each collection and add to list
+            features_list = fc.toList(fc.size())
+            all_features.append(features_list)
+
+        # Combine all lists into one
+        combined_list = all_features[0]
+        for lst in all_features[1:]:
+            combined_list = combined_list.cat(lst)
+
+        # Create final Feature Collection from combined list
+        combined_fc = ee.FeatureCollection(combined_list)
+
+        return combined_fc
+    else:
+        raise ValueError("No batches were successfully processed")
+
+
+def batch_process_gee_operation(
+    operation_func, total_items, batch_size=500, logger=None, **operation_kwargs
+):
+    """
+    Generic batch processing function for GEE operations that may exceed size limits.
+
+    This function processes items in batches, calling operation_func for each batch,
+    and combines the results. Useful for operations that need to avoid GEE size limits.
+
+    Args:
+        operation_func: Function that processes a batch and returns a result (e.g., DataFrame)
+            Signature: operation_func(batch_data, batch_index, **operation_kwargs) -> result
+        total_items: Total number of items to process
+        batch_size: Number of items per batch (default: 500)
+        logger: Optional logger instance for progress messages
+        **operation_kwargs: Additional keyword arguments to pass to operation_func
+
+    Returns:
+        Combined result from all batches (typically a pandas.DataFrame)
+    """
+    import pandas as pd
+
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    num_batches = (total_items + batch_size - 1) // batch_size
+    results = []
+
+    for i in range(num_batches):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, total_items)
+
+        try:
+            batch_result = operation_func(
+                start_idx, end_idx, batch_index=i, **operation_kwargs
+            )
+            results.append(batch_result)
+            # logger.warning(
+            #     f"Processed batch {i + 1}/{num_batches} (items {start_idx}-{end_idx-1})"
+            # )
+        except Exception as e:
+            # logger.warning(f"Batch {i + 1} failed: {e}, trying smaller batch size...")
+            # Try with smaller batches for this range
+            smaller_batch = max((end_idx - start_idx) // 2, 50)
+            sub_results = []
+
+            for j in range(start_idx, end_idx, smaller_batch):
+                sub_end_idx = min(j + smaller_batch, end_idx)
+                try:
+                    sub_result = operation_func(
+                        j, sub_end_idx, batch_index=i, **operation_kwargs
+                    )
+                    sub_results.append(sub_result)
+                except Exception as sub_error:
+                    # logger.error(
+                    #     f"Sub-batch starting at {j} failed: {sub_error}, skipping..."
+                    # )
+                    # Skip this sub-batch and continue
+                    continue
+
+            results.extend(sub_results)
+
+    # Combine all results
+    if results:
+        if isinstance(results[0], pd.DataFrame):
+            return pd.concat(results, ignore_index=True)
+        elif isinstance(results[0], list):
+            # Flatten list of lists
+            return [item for sublist in results for item in sublist]
+        else:
+            # Return as-is if not DataFrame or list
+            return results
+    else:
+        raise ValueError("No batches were successfully processed")

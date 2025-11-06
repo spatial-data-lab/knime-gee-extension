@@ -19,8 +19,9 @@ import nodes.imagecollection
 import nodes.featureio
 import nodes.tool
 import nodes.visualize
-
+import nodes.sampling
 import nodes.classifier
+import nodes.supervise
 
 # import nodes.cluster
 

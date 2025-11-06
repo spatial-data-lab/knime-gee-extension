@@ -76,10 +76,12 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         spec: GoogleEarthEngineObjectSpec,
         credentials=None,
         gee_object=None,  # add：GEE Object
+        classifier=None,  # add：Classifier Object
     ) -> None:
         super().__init__(spec)
         self._credentials = credentials
         self._gee_object = gee_object  # add：GEE Object
+        self._classifier = classifier  # add：Classifier Object
 
     @property
     def spec(self) -> GoogleEarthEngineObjectSpec:
@@ -93,6 +95,11 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
     def gee_object(self):  # add：GEE Object
         return self._gee_object
 
+    @property
+    def classifier(self):  # add：Classifier Object
+        """Get stored classifier object (ee.Classifier)"""
+        return self._classifier
+
     def to_connection_data(self):
         """
         Provide the data that makes up this ConnectionPortObject such that it can be used
@@ -101,6 +108,7 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         return {
             "credentials": self._credentials,
             "gee_object": self._gee_object,  # add：transfer GEE Object
+            "classifier": self._classifier,  # add：transfer Classifier Object
         }
 
     @classmethod
@@ -117,7 +125,8 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         """
         credentials = data.get("credentials") if data else None
         gee_object = data.get("gee_object") if data else None  # add：GEE Object
-        return cls(spec, credentials, gee_object)  # add：transfer GEE Object
+        classifier = data.get("classifier") if data else None  # add：Classifier Object
+        return cls(spec, credentials, gee_object, classifier)  # add：transfer Objects
 
 
 google_earth_engine_port_type = knext.port_type(

@@ -672,14 +672,31 @@ class FeatureCollectionToTable:
     making it useful for exporting classification results, converting GEE vector analysis outputs,
     and processing GEE-generated point samples or administrative boundaries.
 
+    **⚠️ IMPORTANT - Data Size Limitations:**
+
+    This node is designed for **small to medium-sized Feature Collections** only.
+    It uses GEE's interactive API which has a **10MB payload limit**.
+
+    **Recommended Use Cases:**
+    - Small collections (< 1000 features with simple attributes)
+    - Quick data previews and exploration
+    - Testing and debugging workflows
+
+    **For Large Datasets:**
+    - Use **"Feature Collection to Drive"** node for large collections
+    - Export uses GEE's batch processing system (no payload limits)
+    - Suitable for production workflows with millions of features
+
     **Output Formats:**
 
     - **DataFrame**: Standard tabular format with attribute data only
-
     - **GeoDataFrame**: Tabular format with embedded geometry information
 
-    **Note:** Data transfer from Google Earth Engine cloud to local systems is subject to GEE's transmission limits.
-    For large FeatureCollections, using loop to process the data is recommended.
+    **When to Use Export Instead:**
+
+    If you encounter errors like "Request payload size exceeds the limit",
+    your Feature Collection is too large for direct conversion. Please use
+    the "Feature Collection to Drive" node instead.
     """
 
     file_format = knext.StringParameter(
@@ -702,30 +719,47 @@ class FeatureCollectionToTable:
         import pandas as pd
         import geemap
 
-        # LOGGER = logging.getLogger(__name__)
+        LOGGER = logging.getLogger(__name__)
 
         # Get feature collection directly from connection object
-        # No need to initialize GEE - it's already initialized in the same Python process!
         feature_collection = fc_connection.gee_object
 
-        # LOGGER.warning(f"Converting Feature Collection to {self.file_format}")
+        try:
+            LOGGER.warning(
+                "Converting Feature Collection to table (for small collections only)"
+            )
 
-        # Convert based on format
-        if self.file_format == "DataFrame":
-            df = geemap.ee_to_df(feature_collection)
-        else:  # GeoDataFrame
-            df = geemap.ee_to_gdf(feature_collection)
+            # Direct conversion - no batch processing
+            if self.file_format == "DataFrame":
+                df = geemap.ee_to_df(feature_collection)
+            else:  # GeoDataFrame
+                df = geemap.ee_to_gdf(feature_collection)
 
-        # Remove RowID column if present
-        if "<RowID>" in df.columns:
-            df = df.drop(columns=["<RowID>"])
-            # LOGGER.warning("Removed <RowID> column from output")
+            # Remove RowID column if present
+            if "<RowID>" in df.columns:
+                df = df.drop(columns=["<RowID>"])
 
-        # LOGGER.warning(
-        #     f"Successfully converted Feature Collection to table with {len(df)} rows"
-        # )
+            LOGGER.warning(
+                f"Successfully converted Feature Collection to table with {len(df)} rows"
+            )
 
-        return knext.Table.from_pandas(df)
+            return knext.Table.from_pandas(df)
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "payload" in error_msg or "limit" in error_msg:
+                detailed_error = (
+                    f"Feature Collection is too large for direct conversion.\n\n"
+                    f"Error: {e}\n\n"
+                    f"Solution: Use the 'Feature Collection to Drive' node instead.\n"
+                    f"The Export node uses GEE's batch processing system and can handle "
+                    f"much larger datasets without payload limits."
+                )
+                LOGGER.error(detailed_error)
+                raise ValueError(detailed_error)
+            else:
+                LOGGER.error(f"Feature Collection to Table conversion failed: {e}")
+                raise
 
 
 ############################################
@@ -763,8 +797,14 @@ class GeoTableToFeatureCollection:
     making it useful for uploading study area boundaries, converting training samples for classification,
     processing custom administrative boundaries, and working with field survey data or sampling points.
 
+    **Batch Processing:**
+
+    For large GeoTables, batch processing is automatically enabled to handle
+    GEE's upload limits. The node processes features in batches and combines
+    them into a single Feature Collection automatically.
+
     **Note:** Data transfer from local systems to Google Earth Engine cloud is subject to GEE's transmission limits.
-    For large geometry datasets, consider processing in smaller batches to avoid data limit errors.
+    Batch processing helps avoid these limits for large datasets.
 
     """
 
@@ -772,6 +812,15 @@ class GeoTableToFeatureCollection:
         "Geometry Column",
         "Column containing geometry data",
         port_index=0,
+    )
+
+    batch_size = knext.IntParameter(
+        "Batch Size",
+        "Number of features to process in each batch (smaller batches = safer but slower). Batch processing is automatically enabled for large tables.",
+        default_value=500,
+        min_value=50,
+        max_value=5000,
+        is_advanced=True,
     )
 
     def configure(self, configure_context, input_table_schema, input_schema):
@@ -798,7 +847,13 @@ class GeoTableToFeatureCollection:
         # Convert input table to pandas DataFrame
         df = input_table.to_pandas()
 
-        # LOGGER.warning(f"Converting table with {len(df)} rows to Feature Collection")
+        # Remove <RowID> and index columns to avoid duplicate column names
+        if "<RowID>" in df.columns:
+            df = df.drop(columns=["<RowID>"])
+        # Reset index to avoid index column issues
+        df = df.reset_index(drop=True)
+
+        LOGGER.warning(f"Converting table with {len(df)} rows to Feature Collection")
 
         # Create GeoDataFrame
         shp = gp.GeoDataFrame(df, geometry=self.geo_col)
@@ -809,9 +864,786 @@ class GeoTableToFeatureCollection:
         else:
             shp.to_crs(4326, inplace=True)
 
-        # LOGGER.warning(f"GeoDataFrame CRS: {shp.crs}")
+        LOGGER.warning(f"GeoDataFrame CRS: {shp.crs}")
 
-        # Convert to GEE Feature Collection
-        feature_collection = geemap.gdf_to_ee(shp)
+        # Use batch processing if table is large (no need for enable_batch parameter)
+        use_batch = len(shp) > 1000
 
-        return knut.export_gee_connection(feature_collection, gee_connection)
+        try:
+            if use_batch:
+                LOGGER.warning(
+                    f"Using batch processing with batch size {self.batch_size}"
+                )
+                feature_collection = (
+                    knut.batch_process_geodataframe_to_feature_collection(
+                        shp,
+                        batch_size=self.batch_size,
+                        logger=LOGGER,
+                        exec_context=exec_context,
+                    )
+                )
+            else:
+                # Direct conversion for small tables
+                LOGGER.warning("Converting GeoDataFrame directly to Feature Collection")
+                feature_collection = geemap.gdf_to_ee(shp)
+
+            LOGGER.warning(
+                f"Successfully converted {len(shp)} features to Feature Collection"
+            )
+            return knut.export_gee_connection(feature_collection, gee_connection)
+
+        except Exception as e:
+            # If direct conversion fails (likely due to size), try batch processing
+            if not use_batch:
+                LOGGER.warning(
+                    f"Direct conversion failed ({e}), retrying with batch processing"
+                )
+                try:
+                    feature_collection = (
+                        knut.batch_process_geodataframe_to_feature_collection(
+                            shp,
+                            batch_size=self.batch_size,
+                            logger=LOGGER,
+                            exec_context=exec_context,
+                        )
+                    )
+                    LOGGER.warning(
+                        f"Successfully converted {len(shp)} features to Feature Collection (using batch processing)"
+                    )
+                    return knut.export_gee_connection(
+                        feature_collection, gee_connection
+                    )
+                except Exception as batch_error:
+                    LOGGER.error(f"Batch processing also failed: {batch_error}")
+                    raise
+            else:
+                LOGGER.error(f"GeoTable to Feature Collection conversion failed: {e}")
+                raise
+
+
+############################################
+# Feature Collection to Drive
+############################################
+
+
+@knext.node(
+    name="Feature Collection to Drive",
+    node_type=knext.NodeType.SINK,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Feature2Drive.png",
+    id="fc2drive",
+    after="fc2table",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with embedded feature collection object.",
+    port_type=google_earth_engine_port_type,
+)
+class FeatureCollectionToDrive:
+    """Exports a Google Earth Engine FeatureCollection to Google Drive.
+
+    This node exports a FeatureCollection to Google Drive using GEE's Export.table.toDrive()
+    function. This is the recommended method for large Feature Collections as it uses GEE's
+    batch processing system and has no payload size limits.
+
+    **Authentication Requirements:**
+
+    **IMPORTANT**: This node requires **Interactive Authentication** (not Service Account).
+
+    In the Google Authenticator node, you must:
+    1. Select "Interactive" authentication method (not Service Account)
+    2. Set scope to "Custom"
+    3. Add the following TWO scopes (click "+ Add scope" for the second one):
+       - https://www.googleapis.com/auth/earthengine (required for GEE operations)
+       - https://www.googleapis.com/auth/drive.file (required for Drive export)
+         OR https://www.googleapis.com/auth/drive (full Drive access)
+
+    **Note**: Service accounts cannot export to Google Drive (no storage quota).
+    Use "Feature Collection to Cloud Storage" node instead for Service Account authentication.
+
+    **Export Formats:**
+
+    - **CSV**: Tabular format with geometry as WKT (Well-Known Text) in a column
+    - **GeoJSON**: Standard GeoJSON format with full geometry support
+    - **KML**: Google Earth format
+    - **KMZ**: Compressed KML format
+    - **SHP**: Shapefile format (exports multiple files)
+
+    **Advantages over Direct Conversion:**
+
+    - **No payload limits**: Can handle millions of features
+    - **Batch processing**: Uses GEE's efficient export system
+    - **Reliable**: Designed for production workflows
+    - **Supports large geometries**: No memory constraints
+
+    **Output Location:**
+
+    The file will be exported to your Google Drive in the folder specified (default: "EEexport").
+    After export completes, you can download it from Google Drive or use it
+    in other workflows.
+
+    **Task Description:**
+
+    The export task description is automatically generated as "KNIME Feature Collection Export"
+    with a timestamp for easy identification.
+
+    **Use Cases:**
+
+    - Large classification results
+    - Extensive sampling data
+    - Administrative boundaries with many attributes
+    - Any Feature Collection that exceeds the 10MB payload limit
+
+    **Comparison with Other Export Nodes:**
+
+    - **Feature Collection to Table**: Fast, direct conversion, but limited to small collections
+    - **Feature Collection to Drive**: Slower, but handles unlimited size (Interactive auth only)
+    - **Feature Collection to Cloud Storage**: Works with both Interactive and Service Account auth
+    """
+
+    file_format = knext.StringParameter(
+        "Export Format",
+        "Format for the exported file",
+        default_value="CSV",
+        enum=["CSV", "GeoJSON", "KML", "KMZ", "SHP"],
+    )
+
+    folder = knext.StringParameter(
+        "Drive Folder",
+        "Google Drive folder name where the file will be exported",
+        default_value="EEexport",
+    )
+
+    file_name = knext.StringParameter(
+        "File Name",
+        "Name of the exported file (without extension, extension will be added automatically based on format)",
+        default_value="feature_collection_export",
+    )
+
+    wait_for_completion = knext.BoolParameter(
+        "Wait for Completion",
+        "If enabled, the node will wait until the export task completes before finishing. "
+        "If disabled, the export will run asynchronously in the background.",
+        default_value=False,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+        import time
+        from datetime import datetime
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get feature collection directly from connection object
+        feature_collection = fc_connection.gee_object
+
+        try:
+            # Generate description with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            description = f"KNIME Feature Collection Export {timestamp}"
+
+            # Map format to GEE format string
+            format_map = {
+                "CSV": "CSV",
+                "GeoJSON": "GeoJSON",
+                "KML": "KML",
+                "KMZ": "KMZ",
+                "SHP": "SHP",
+            }
+            gee_format = format_map.get(self.file_format, "CSV")
+
+            # Get file extension for display
+            ext_map = {
+                "CSV": ".csv",
+                "GeoJSON": ".geojson",
+                "KML": ".kml",
+                "KMZ": ".kmz",
+                "SHP": ".shp",  # Note: SHP exports multiple files
+            }
+            file_ext = ext_map.get(self.file_format, ".csv")
+
+            LOGGER.warning(
+                f"Starting Feature Collection export to Google Drive: {self.folder}/{self.file_name}{file_ext}"
+            )
+            LOGGER.warning(f"Export format: {self.file_format}")
+
+            # Create export task
+            task = ee.batch.Export.table.toDrive(
+                collection=feature_collection,
+                description=description,
+                folder=self.folder,
+                fileNamePrefix=self.file_name,
+                fileFormat=gee_format,
+            )
+
+            # Start the task
+            task.start()
+            LOGGER.warning(f"Export task started: {task.id}")
+
+            if self.wait_for_completion:
+                LOGGER.warning("Waiting for export to complete...")
+                while task.active():
+                    time.sleep(5)
+                    LOGGER.warning(
+                        "Export still running, checking again in 5 seconds..."
+                    )
+
+                # Check task status
+                status = task.status()
+                if status["state"] == "COMPLETED":
+                    LOGGER.warning(
+                        f"Export completed successfully! "
+                        f"File available at: Google Drive > {self.folder} > {self.file_name}{file_ext}"
+                    )
+                    if self.file_format == "SHP":
+                        LOGGER.warning(
+                            "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj). "
+                            "All files will be in the same folder."
+                        )
+                elif status["state"] == "FAILED":
+                    error_msg = status.get("error_message", "Unknown error")
+                    raise RuntimeError(f"Export task failed: {error_msg}")
+                else:
+                    LOGGER.warning(f"Export task status: {status['state']}")
+            else:
+                LOGGER.warning(
+                    f"Export task started in background. "
+                    f"Task ID: {task.id}. "
+                    f"Check status in GEE Code Editor or wait for it to complete."
+                )
+                LOGGER.warning(
+                    f"File will be available at: Google Drive > {self.folder} > {self.file_name}{file_ext}"
+                )
+                if self.file_format == "SHP":
+                    LOGGER.warning(
+                        "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj)."
+                    )
+
+            return None
+
+        except Exception as e:
+            LOGGER.error(f"Feature Collection export to Drive failed: {e}")
+            raise
+
+
+############################################
+# Feature Collection to Cloud Storage
+############################################
+
+
+@knext.node(
+    name="Feature Collection to Cloud Storage",
+    node_type=knext.NodeType.SINK,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Feature2Cloud.png",
+    id="fc2cloudstorage",
+    after="fc2drive",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with embedded feature collection object.",
+    port_type=google_earth_engine_port_type,
+)
+class FeatureCollectionToCloudStorage:
+    """Exports a Google Earth Engine FeatureCollection to Google Cloud Storage.
+
+    This node exports a FeatureCollection to Google Cloud Storage using GEE's Export.table.toCloudStorage()
+    function. This is the recommended method for large Feature Collections when using Service Account
+    authentication, as it uses GEE's batch processing system and has no payload size limits.
+
+    **IMPORTANT - Authentication Requirements:**
+
+    **You MUST add TWO scopes** in the Google Authenticator node:
+
+    1. Set scope to "Custom"
+    2. Add the following TWO scopes (click "+ Add scope" for the second one):
+       - https://www.googleapis.com/auth/earthengine (required for GEE operations)
+       - https://www.googleapis.com/auth/cloud-platform (required for Cloud Storage access)
+
+    This applies to both **Interactive Authentication** and **Service Account** authentication.
+
+    **Setup Steps:**
+
+    1. **Create Cloud Storage Bucket FIRST** (before using this node):
+       - Go to Google Cloud Console > Cloud Storage > Buckets
+       - Create a new bucket (or use an existing one)
+       - Note the exact bucket name (e.g., "my-project-bucket")
+       - **IMPORTANT**: You must create the bucket before running this node
+
+    2. **Configure Service Account IAM Role** (for Service Account auth):
+       - Go to Google Cloud Console > IAM & Admin > IAM
+       - Find your service account and click the Edit icon
+       - Add "Storage Admin" or "Storage Object Admin" role
+       - Click "Save" and wait a few minutes for activation
+
+    3. **Add Scopes in Google Authenticator** (as described above)
+
+    **Cost Warning:**
+
+    ⚠️ **Google Cloud Storage has usage costs**. You will be charged for:
+    - Storage: Data stored in the bucket (per GB per month)
+    - Operations: Write operations (PUT requests)
+    - Network: Data transfer out of Cloud Storage (if downloading)
+
+    For pricing details, see: https://cloud.google.com/storage/pricing
+
+    To minimize costs:
+    - Delete exported files after downloading
+    - Use lifecycle policies to auto-delete old files
+    - Monitor usage in Google Cloud Console
+
+    **Export Formats:**
+
+    - **CSV**: Tabular format with geometry as WKT (Well-Known Text) in a column
+    - **GeoJSON**: Standard GeoJSON format with full geometry support
+    - **KML**: Google Earth format
+    - **KMZ**: Compressed KML format
+    - **SHP**: Shapefile format (exports multiple files)
+
+    **Advantages over Direct Conversion:**
+
+    - **No payload limits**: Can handle millions of features
+    - **Batch processing**: Uses GEE's efficient export system
+    - **Reliable**: Designed for production workflows
+    - **Supports large geometries**: No memory constraints
+    - **Service Account compatible**: Works with Service Account authentication
+
+    **Output Location:**
+
+    The file will be exported directly to your Google Cloud Storage bucket root (e.g., `gs://bucket-name/file_name.csv`).
+    After export completes, you can download it from Cloud Storage using:
+    - Google Cloud Console > Cloud Storage > Browser
+    - gsutil command: `gsutil cp gs://bucket-name/file_name.csv .`
+    - Or use it in other Google Cloud workflows
+
+    **Task Description:**
+
+    The export task description is automatically generated as "KNIME Feature Collection Export"
+    with a timestamp for easy identification.
+
+    **Use Cases:**
+
+    - Large classification results (Service Account recommended)
+    - Extensive sampling data
+    - Administrative boundaries with many attributes
+    - Any Feature Collection that exceeds the 10MB payload limit
+    - Production workflows using Service Account authentication
+
+    **Comparison with Other Export Nodes:**
+
+    - **Feature Collection to Table**: Fast, direct conversion, but limited to small collections
+    - **Feature Collection to Drive**: Works with Interactive auth only (Service Account not supported)
+    - **Feature Collection to Cloud Storage**: Works with both Interactive and Service Account auth
+    """
+
+    bucket = knext.StringParameter(
+        "Cloud Storage Bucket",
+        "**IMPORTANT**: Google Cloud Storage bucket name (e.g., 'my-project-bucket' or 'my-project.appspot.com'). "
+        "The bucket MUST exist before running this node. Create it in Google Cloud Console > Cloud Storage > Buckets. "
+        "Your service account must have write permissions (Storage Admin or Storage Object Admin role).",
+        default_value="",
+    )
+
+    file_format = knext.StringParameter(
+        "Export Format",
+        "Format for the exported file",
+        default_value="CSV",
+        enum=["CSV", "GeoJSON", "KML", "KMZ", "SHP"],
+    )
+
+    file_name = knext.StringParameter(
+        "File Name",
+        "Name of the exported file (without extension, extension will be added automatically based on format)",
+        default_value="feature_collection_export",
+    )
+
+    wait_for_completion = knext.BoolParameter(
+        "Wait for Completion",
+        "If enabled, the node will wait until the export task completes before finishing. "
+        "If disabled, the export will run asynchronously in the background.",
+        default_value=False,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+        import time
+        from datetime import datetime
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get feature collection directly from connection object
+        feature_collection = fc_connection.gee_object
+
+        try:
+            # Validate bucket name
+            if not self.bucket:
+                raise ValueError(
+                    "Cloud Storage bucket name is required.\n\n"
+                    "**IMPORTANT**: You must create the bucket BEFORE running this node.\n\n"
+                    "To create a bucket:\n"
+                    "1. Go to Google Cloud Console > Cloud Storage > Buckets\n"
+                    "2. Click 'Create Bucket'\n"
+                    "3. Enter a bucket name (e.g., 'my-project-bucket')\n"
+                    "4. Choose location and storage class\n"
+                    "5. Click 'Create'\n\n"
+                    "Also ensure:\n"
+                    "- Your service account has 'Storage Admin' or 'Storage Object Admin' role in IAM\n"
+                    "- You have added TWO scopes in Google Authenticator: "
+                    "https://www.googleapis.com/auth/earthengine and "
+                    "https://www.googleapis.com/auth/cloud-platform"
+                )
+
+            # Generate description with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            description = f"KNIME Feature Collection Export {timestamp}"
+
+            # Map format to GEE format string
+            format_map = {
+                "CSV": "CSV",
+                "GeoJSON": "GeoJSON",
+                "KML": "KML",
+                "KMZ": "KMZ",
+                "SHP": "SHP",
+            }
+            gee_format = format_map.get(self.file_format, "CSV")
+
+            # Get file extension for display
+            ext_map = {
+                "CSV": ".csv",
+                "GeoJSON": ".geojson",
+                "KML": ".kml",
+                "KMZ": ".kmz",
+                "SHP": ".shp",  # Note: SHP exports multiple files
+            }
+            file_ext = ext_map.get(self.file_format, ".csv")
+
+            # File will be exported directly to bucket root
+            full_path = self.file_name
+
+            LOGGER.warning(
+                f"Starting Feature Collection export to Cloud Storage: gs://{self.bucket}/{full_path}{file_ext}"
+            )
+            LOGGER.warning(f"Export format: {self.file_format}")
+
+            # Create export task to Cloud Storage
+            task = ee.batch.Export.table.toCloudStorage(
+                collection=feature_collection,
+                description=description,
+                bucket=self.bucket,
+                fileNamePrefix=full_path,
+                fileFormat=gee_format,
+            )
+
+            # Start the task
+            task.start()
+            LOGGER.warning(f"Export task started: {task.id}")
+
+            if self.wait_for_completion:
+                LOGGER.warning("Waiting for export to complete...")
+                while task.active():
+                    time.sleep(5)
+                    LOGGER.warning(
+                        "Export still running, checking again in 5 seconds..."
+                    )
+
+                # Check task status
+                status = task.status()
+                if status["state"] == "COMPLETED":
+                    LOGGER.warning(
+                        f"Export completed successfully! "
+                        f"File available at: gs://{self.bucket}/{full_path}{file_ext}"
+                    )
+                    if self.file_format == "SHP":
+                        LOGGER.warning(
+                            "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj). "
+                            "All files will be in the same location."
+                        )
+                elif status["state"] == "FAILED":
+                    error_msg = status.get("error_message", "Unknown error")
+                    raise RuntimeError(f"Export task failed: {error_msg}")
+                else:
+                    LOGGER.warning(f"Export task status: {status['state']}")
+            else:
+                LOGGER.warning(
+                    f"Export task started in background. "
+                    f"Task ID: {task.id}. "
+                    f"Check status in GEE Code Editor or wait for it to complete."
+                )
+                LOGGER.warning(
+                    f"File will be available at: gs://{self.bucket}/{full_path}{file_ext}"
+                )
+                if self.file_format == "SHP":
+                    LOGGER.warning(
+                        "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj)."
+                    )
+
+            return None
+
+        except Exception as e:
+            LOGGER.error(f"Feature Collection export to Cloud Storage failed: {e}")
+            raise
+
+
+############################################
+# Cloud Storage to Table
+############################################
+
+
+@knext.node(
+    name="Cloud Storage to Table",
+    node_type=knext.NodeType.SOURCE,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Cloud2Table.png",
+    id="cloudstorage2table",
+    after="fc2cloudstorage",
+)
+@knext.input_port(
+    name="Google Earth Engine Connection",
+    description="Google Earth Engine connection from the GEE Connector node (used for authentication).",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_table(
+    name="Output Table",
+    description="Table converted from Cloud Storage file (DataFrame or GeoDataFrame based on file format)",
+)
+class CloudStorageToTable:
+    """Reads a file from Google Cloud Storage and converts it to a KNIME table.
+
+    This node reads files exported from GEE (via "Feature Collection to Cloud Storage")
+    and converts them to local DataFrames or GeoDataFrames for further processing in KNIME.
+
+    **Supported File Formats:**
+
+    - **CSV**: Converts to DataFrame (no geometry column)
+    - **GeoJSON**: Converts to GeoDataFrame (with geometry column)
+    - **KML/KMZ**: Converts to GeoDataFrame (with geometry column)
+    - **SHP**: Converts to GeoDataFrame (with geometry column)
+
+    **Authentication Requirements:**
+
+    **You MUST add TWO scopes** in the Google Authenticator node:
+    - https://www.googleapis.com/auth/earthengine (required for GEE operations)
+    - https://www.googleapis.com/auth/cloud-platform (required for Cloud Storage access)
+
+    **File Format Detection:**
+
+    The node automatically detects the file format based on the file extension:
+    - `.csv` → DataFrame (no geometry)
+    - `.geojson` → GeoDataFrame (with geometry)
+    - `.kml`, `.kmz` → GeoDataFrame (with geometry)
+    - `.shp` → GeoDataFrame (with geometry)
+
+    **Output Format:**
+
+    - **CSV files**: Output as DataFrame (tabular data only)
+    - **Geospatial files**: Output as GeoDataFrame (with geometry column)
+
+    **Use Cases:**
+
+    - Reading large Feature Collections exported via "Feature Collection to Cloud Storage"
+    - Processing exported classification results in KNIME
+    - Integrating GEE exports with other KNIME workflows
+    - Converting Cloud Storage exports to local tables for analysis
+
+    **Notes:**
+
+    - The file must exist in the specified bucket before running this node
+    - File path should be relative to bucket root (e.g., "file_name.csv" not "gs://bucket/file_name.csv")
+    - Large files may take time to download and process
+    """
+
+    bucket = knext.StringParameter(
+        "Cloud Storage Bucket",
+        "Google Cloud Storage bucket name (e.g., 'my-project-bucket'). "
+        "This must match the bucket used in 'Feature Collection to Cloud Storage' node.",
+        default_value="",
+    )
+
+    file_name = knext.StringParameter(
+        "File Name",
+        "Name of the file in Cloud Storage (e.g., 'feature_collection_export.csv'). "
+        "Include the file extension. The file should be in the bucket root.",
+        default_value="",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        gee_connection,
+    ):
+        import logging
+        import pandas as pd
+        import geopandas as gpd
+        import io
+        from google.cloud import storage
+
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            # Validate parameters
+            if not self.bucket:
+                raise ValueError(
+                    "Cloud Storage bucket name is required. "
+                    "Please provide the bucket name used in 'Feature Collection to Cloud Storage' node."
+                )
+
+            if not self.file_name:
+                raise ValueError(
+                    "File name is required. "
+                    "Please provide the file name exported from 'Feature Collection to Cloud Storage' node."
+                )
+
+            LOGGER.warning(
+                f"Reading file from Cloud Storage: gs://{self.bucket}/{self.file_name}"
+            )
+
+            # Get credentials from GEE connection
+            credentials = gee_connection.credentials
+
+            # Initialize Cloud Storage client
+            # Use credentials from GEE connection (works for both service account and user credentials)
+            try:
+                # Try to refresh credentials if needed (for user credentials)
+                if hasattr(credentials, "refresh") and credentials.expired:
+                    credentials.refresh(None)
+            except Exception:
+                # If refresh fails, continue anyway (service account credentials don't need refresh)
+                pass
+
+            storage_client = storage.Client(
+                credentials=credentials, project=gee_connection.spec.project_id
+            )
+
+            # Get bucket and file
+            bucket_obj = storage_client.bucket(self.bucket)
+            blob = bucket_obj.blob(self.file_name)
+
+            # Check if file exists
+            if not blob.exists():
+                raise FileNotFoundError(
+                    f"File not found: gs://{self.bucket}/{self.file_name}\n\n"
+                    f"Please verify:\n"
+                    f"1. The bucket name is correct\n"
+                    f"2. The file name matches the export from 'Feature Collection to Cloud Storage'\n"
+                    f"3. The export task has completed successfully"
+                )
+
+            # Determine file format from extension
+            file_ext = (
+                self.file_name.lower().split(".")[-1] if "." in self.file_name else ""
+            )
+
+            LOGGER.warning(f"Detected file format: {file_ext}")
+
+            # Download file content
+            file_content = blob.download_as_bytes()
+
+            # Parse based on file format
+            if file_ext == "csv":
+                # CSV file - read as DataFrame
+                LOGGER.warning("Reading CSV file as DataFrame")
+                df = pd.read_csv(io.BytesIO(file_content))
+                LOGGER.warning(f"Successfully loaded CSV with {len(df)} rows")
+
+            elif file_ext == "geojson":
+                # GeoJSON file - read as GeoDataFrame
+                LOGGER.warning("Reading GeoJSON file as GeoDataFrame")
+                df = gpd.read_file(io.BytesIO(file_content))
+                LOGGER.warning(f"Successfully loaded GeoJSON with {len(df)} rows")
+
+            elif file_ext in ["kml", "kmz"]:
+                # KML/KMZ file - read as GeoDataFrame
+                LOGGER.warning(f"Reading {file_ext.upper()} file as GeoDataFrame")
+                # For KMZ, we need to handle zip extraction
+                if file_ext == "kmz":
+                    import zipfile
+
+                    with zipfile.ZipFile(io.BytesIO(file_content)) as z:
+                        # Find the KML file inside
+                        kml_files = [f for f in z.namelist() if f.endswith(".kml")]
+                        if not kml_files:
+                            raise ValueError("No KML file found in KMZ archive")
+                        kml_content = z.read(kml_files[0])
+                        df = gpd.read_file(io.BytesIO(kml_content), driver="KML")
+                else:
+                    df = gpd.read_file(io.BytesIO(file_content), driver="KML")
+                LOGGER.warning(
+                    f"Successfully loaded {file_ext.upper()} with {len(df)} rows"
+                )
+
+            elif file_ext == "shp":
+                # Shapefile - read as GeoDataFrame
+                # Note: Shapefile consists of multiple files, but we'll try to read the .shp
+                LOGGER.warning("Reading Shapefile as GeoDataFrame")
+                # For shapefiles, we might need to download all related files
+                # But for simplicity, try to read if it's a single file
+                # In practice, shapefiles exported from GEE might need special handling
+                try:
+                    df = gpd.read_file(io.BytesIO(file_content))
+                except Exception as e:
+                    raise ValueError(
+                        f"Shapefile reading failed: {e}\n\n"
+                        f"Note: Shapefiles exported from GEE consist of multiple files (.shp, .shx, .dbf, .prj). "
+                        f"Consider downloading the entire folder from Cloud Storage or use GeoJSON format instead."
+                    )
+                LOGGER.warning(f"Successfully loaded Shapefile with {len(df)} rows")
+
+            else:
+                # Try to auto-detect format
+                LOGGER.warning(
+                    f"Unknown file extension '{file_ext}', attempting to auto-detect format"
+                )
+                try:
+                    # Try GeoJSON first (most common for geospatial data)
+                    df = gpd.read_file(io.BytesIO(file_content))
+                    LOGGER.warning("Auto-detected as GeoJSON/GeoDataFrame")
+                except Exception:
+                    try:
+                        # Try CSV
+                        df = pd.read_csv(io.BytesIO(file_content))
+                        LOGGER.warning("Auto-detected as CSV/DataFrame")
+                    except Exception as e:
+                        raise ValueError(
+                            f"Unable to determine file format for '{self.file_name}'. "
+                            f"Supported formats: CSV, GeoJSON, KML, KMZ, SHP. "
+                            f"Error: {e}"
+                        )
+
+            # Ensure CRS is set for GeoDataFrames
+            if isinstance(df, gpd.GeoDataFrame):
+                if df.crs is None:
+                    df.set_crs(epsg=4326, inplace=True)
+                    LOGGER.warning("Set CRS to EPSG:4326 (WGS84)")
+
+            # Remove RowID column if present (from GEE exports)
+            if "<RowID>" in df.columns:
+                df = df.drop(columns=["<RowID>"])
+
+            LOGGER.warning(
+                f"Successfully converted Cloud Storage file to table with {len(df)} rows"
+            )
+
+            return knext.Table.from_pandas(df)
+
+        except Exception as e:
+            LOGGER.error(f"Cloud Storage to Table conversion failed: {e}")
+            raise
