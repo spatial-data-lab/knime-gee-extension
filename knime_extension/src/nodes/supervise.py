@@ -6,6 +6,7 @@ Based on: https://developers.google.com/earth-engine/guides/classification
 
 import knime.extension as knext
 import util.knime_utils as knut
+import pandas as pd
 from util.common import (
     GoogleEarthEngineConnectionObject,
     GoogleEarthEngineObjectSpec,
@@ -24,6 +25,214 @@ __category = knext.category(
 
 # Node icon path
 __NODE_ICON_PATH = "icons/icon/supervised/"
+
+
+def remap_class_values_to_continuous(training_fc, label_property):
+    """Remap class values to 0-based continuous integers for GEE classifier training.
+
+    GEE classifiers require class values to be 0-based continuous integers.
+    This function maps arbitrary class values (e.g., 11, 21, 22, 90) to
+    continuous integers (0, 1, 2, 3, ...).
+
+    Returns:
+        - remapped_fc: FeatureCollection with remapped class values
+        - class_mapping: dict mapping original values to new values {original: new}
+        - reverse_mapping: dict mapping new values to original {new: original}
+    """
+    import ee
+    import logging
+
+    LOGGER = logging.getLogger(__name__)
+
+    # Get unique class values from training data
+    try:
+        unique_classes = (
+            training_fc.aggregate_array(label_property).distinct().sort().getInfo()
+        )
+        unique_classes = [c for c in unique_classes if c is not None]
+    except Exception as e:
+        LOGGER.warning(
+            f"Could not get unique classes: {e}, assuming already continuous"
+        )
+        return training_fc, None, None
+
+    # Check if already 0-based continuous
+    if unique_classes == list(range(len(unique_classes))):
+        LOGGER.warning(
+            "Class values are already 0-based continuous, no remapping needed"
+        )
+        return training_fc, None, None
+
+    LOGGER.warning(f"Original class values: {unique_classes}")
+
+    # Create mapping: original value -> 0-based index
+    class_mapping = {orig: idx for idx, orig in enumerate(unique_classes)}
+    reverse_mapping = {idx: orig for orig, idx in class_mapping.items()}
+
+    LOGGER.warning(f"Class mapping: {class_mapping}")
+
+    # Remap class values in FeatureCollection using server-side mapping
+    # Build a remap list: [from1, to1, from2, to2, ...]
+    remap_from = []
+    remap_to = []
+    for orig_val, new_val in class_mapping.items():
+        remap_from.append(orig_val)
+        remap_to.append(new_val)
+
+    # Use remap() method if available, otherwise use map()
+    def remap_class(feature):
+        original_value = feature.get(label_property)
+        # Use ee.Number to ensure proper comparison
+        remapped_value = ee.Number(original_value)
+        # Build chain of conditions for each class
+        for idx, orig_val in enumerate(unique_classes):
+            remapped_value = ee.Algorithms.If(
+                ee.Number(original_value).eq(ee.Number(orig_val)),
+                ee.Number(idx),
+                remapped_value,
+            )
+        return feature.set(label_property, remapped_value)
+
+    remapped_fc = training_fc.map(remap_class)
+
+    return remapped_fc, class_mapping, reverse_mapping
+
+
+def compute_classification_metrics(
+    training_fc, classifier, label_property, reverse_mapping=None
+):
+    """Compute classification metrics from training data using GEE's errorMatrix.
+
+    Optimized version: Only 2 getInfo() calls (confusion matrix + order).
+    All other metrics are calculated from confusion matrix on client side.
+
+    Returns a pandas DataFrame with per-class and overall metrics.
+    """
+    import ee
+    import logging
+
+    LOGGER = logging.getLogger(__name__)
+
+    # Classify the training data
+    classified_fc = training_fc.classify(classifier, "classification")
+
+    # Compute error matrix (GEE built-in, server-side)
+    error_matrix = classified_fc.errorMatrix(label_property, "classification")
+
+    # Only 2 getInfo() calls: confusion matrix and order
+    confusion_matrix = error_matrix.array().getInfo()
+    order_raw = error_matrix.order().getInfo()
+
+    # Process order
+    num_classes = len(confusion_matrix)
+    if isinstance(order_raw, list):
+        unique_order = []
+        seen = set()
+        for val in order_raw:
+            if val not in seen:
+                unique_order.append(val)
+                seen.add(val)
+                if len(unique_order) >= num_classes:
+                    break
+        while len(unique_order) < num_classes:
+            unique_order.append(f"Class_{len(unique_order)}")
+        order = unique_order[:num_classes]
+    else:
+        order = [f"Class_{i}" for i in range(num_classes)]
+
+    # Apply reverse mapping if provided
+    if reverse_mapping is not None:
+        mapped_order = []
+        for val in order[:num_classes]:
+            if isinstance(val, (int, float)) and int(val) in reverse_mapping:
+                mapped_order.append(reverse_mapping[int(val)])
+            else:
+                mapped_order.append(val)
+        order = mapped_order
+        LOGGER.warning(f"Using reverse mapping to show original class values: {order}")
+
+    LOGGER.warning(f"Computing metrics for {num_classes} classes: {order}")
+
+    # Calculate all metrics from confusion matrix (no additional getInfo() calls)
+    total_samples = sum(
+        confusion_matrix[i][j] for i in range(num_classes) for j in range(num_classes)
+    )
+    overall_tp = sum(confusion_matrix[i][i] for i in range(num_classes))
+    overall_accuracy = overall_tp / total_samples if total_samples > 0 else 0.0
+
+    # Calculate Kappa from confusion matrix
+    # Kappa = (Po - Pe) / (1 - Pe)
+    # Po = overall accuracy
+    # Pe = sum of (row_sum * col_sum) / total_samples^2 for each class
+    pe = 0.0
+    for i in range(num_classes):
+        row_sum = sum(confusion_matrix[i])
+        col_sum = sum(confusion_matrix[j][i] for j in range(num_classes))
+        pe += (
+            (row_sum * col_sum) / (total_samples * total_samples)
+            if total_samples > 0
+            else 0.0
+        )
+    kappa = (overall_accuracy - pe) / (1 - pe) if (1 - pe) > 0 else 0.0
+
+    # Calculate per-class metrics from confusion matrix
+    metrics_list = []
+
+    for i in range(num_classes):
+        class_name = order[i] if i < len(order) else f"Class_{i}"
+
+        # Get values from confusion matrix
+        tp = confusion_matrix[i][i]  # True positives (diagonal)
+        row_sum = sum(confusion_matrix[i])  # Total actual samples of this class
+        col_sum = sum(
+            confusion_matrix[j][i] for j in range(num_classes)
+        )  # Total predicted as this class
+
+        # Calculate Precision (Consumers Accuracy) = TP / (TP + FP) = TP / col_sum
+        precision = tp / col_sum if col_sum > 0 else 0.0
+
+        # Calculate Recall (Producers Accuracy) = TP / (TP + FN) = TP / row_sum
+        recall = tp / row_sum if row_sum > 0 else 0.0
+
+        # Calculate F-measure
+        f_measure = (
+            2 * (precision * recall) / (precision + recall)
+            if (precision + recall) > 0
+            else 0.0
+        )
+
+        metrics_list.append(
+            {
+                "Class": str(class_name),
+                "TP": int(tp),
+                "Precision": round(precision, 4),
+                "Recall": round(recall, 4),
+                "F-measure": round(f_measure, 4),
+            }
+        )
+
+    # Add Overall row
+    metrics_list.append(
+        {
+            "Class": "Overall",
+            "TP": int(overall_tp),
+            "Precision": None,
+            "Recall": None,
+            "F-measure": None,
+            "Accuracy": round(overall_accuracy, 4),
+            "Cohen's Kappa": round(kappa, 4),
+        }
+    )
+
+    # Create DataFrame
+    df = pd.DataFrame(metrics_list)
+    df.set_index("Class", inplace=True)
+
+    LOGGER.warning(
+        f"Created metrics table with {len(metrics_list)} rows ({num_classes} classes + 1 Overall)"
+    )
+
+    return df
 
 
 ############################################
@@ -777,12 +986,33 @@ class RandomForestLearner:
             if self.max_nodes > 0:
                 classifier_params["maxNodes"] = self.max_nodes
 
+            # Remap class values to 0-based continuous integers
+            # GEE classifiers require continuous integer class values starting from 0
+            try:
+                remapped_fc, class_mapping, reverse_mapping = (
+                    remap_class_values_to_continuous(training_fc, self.label_property)
+                )
+                if class_mapping is not None:
+                    LOGGER.warning(
+                        f"Remapped {len(class_mapping)} class values to 0-based continuous integers"
+                    )
+                    training_fc_for_training = remapped_fc
+                else:
+                    training_fc_for_training = training_fc
+                    reverse_mapping = None
+            except Exception as e:
+                LOGGER.warning(
+                    f"Could not remap class values (may already be continuous): {e}. Using original values."
+                )
+                training_fc_for_training = training_fc
+                reverse_mapping = None
+
             # Create and train classifier
             classifier = ee.Classifier.smileRandomForest(**classifier_params)
 
             # Train classifier
             trained_classifier = classifier.train(
-                features=training_fc,
+                features=training_fc_for_training,
                 classProperty=self.label_property,
                 inputProperties=feature_list,
             )
@@ -798,6 +1028,7 @@ class RandomForestLearner:
                 credentials=training_data_connection.credentials,
                 gee_object=None,
                 classifier=trained_classifier,
+                reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
             )
 
             return classifier_connection
@@ -984,11 +1215,32 @@ class CARTLearner:
                 "minLeafPopulation": self.min_leaf_population,
             }
 
+            # Remap class values to 0-based continuous integers
+            # GEE classifiers require continuous integer class values starting from 0
+            try:
+                remapped_fc, class_mapping, reverse_mapping = (
+                    remap_class_values_to_continuous(training_fc, self.label_property)
+                )
+                if class_mapping is not None:
+                    LOGGER.warning(
+                        f"Remapped {len(class_mapping)} class values to 0-based continuous integers"
+                    )
+                    training_fc_for_training = remapped_fc
+                else:
+                    training_fc_for_training = training_fc
+                    reverse_mapping = None
+            except Exception as e:
+                LOGGER.warning(
+                    f"Could not remap class values (may already be continuous): {e}. Using original values."
+                )
+                training_fc_for_training = training_fc
+                reverse_mapping = None
+
             # Create and train classifier
             classifier = ee.Classifier.smileCart(**classifier_params)
 
             trained_classifier = classifier.train(
-                features=training_fc,
+                features=training_fc_for_training,
                 classProperty=self.label_property,
                 inputProperties=feature_list,
             )
@@ -1004,6 +1256,7 @@ class CARTLearner:
                 credentials=training_data_connection.credentials,
                 gee_object=None,
                 classifier=trained_classifier,
+                reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
             )
 
             return classifier_connection
@@ -1208,12 +1461,33 @@ class SVMLearner:
                 classifier_params["kernelType"] = "Polynomial"
                 classifier_params["degree"] = self.degree
 
+            # Remap class values to 0-based continuous integers
+            # GEE classifiers require continuous integer class values starting from 0
+            try:
+                remapped_fc, class_mapping, reverse_mapping = (
+                    remap_class_values_to_continuous(training_fc, self.label_property)
+                )
+                if class_mapping is not None:
+                    LOGGER.warning(
+                        f"Remapped {len(class_mapping)} class values to 0-based continuous integers"
+                    )
+                    training_fc_for_training = remapped_fc
+                else:
+                    training_fc_for_training = training_fc
+                    reverse_mapping = None
+            except Exception as e:
+                LOGGER.warning(
+                    f"Could not remap class values (may already be continuous): {e}. Using original values."
+                )
+                training_fc_for_training = training_fc
+                reverse_mapping = None
+
             # Create and train classifier
             # Note: GEE uses libsvm for SVM
             classifier = ee.Classifier.libsvm(**classifier_params)
 
             trained_classifier = classifier.train(
-                features=training_fc,
+                features=training_fc_for_training,
                 classProperty=self.label_property,
                 inputProperties=feature_list,
             )
@@ -1229,6 +1503,7 @@ class SVMLearner:
                 credentials=training_data_connection.credentials,
                 gee_object=None,
                 classifier=trained_classifier,
+                reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
             )
 
             return classifier_connection
@@ -1412,6 +1687,27 @@ class NaiveBayesLearner:
                 "Negative values will be discarded. Continuous features may need discretization."
             )
 
+            # Remap class values to 0-based continuous integers
+            # GEE classifiers require continuous integer class values starting from 0
+            try:
+                remapped_fc, class_mapping, reverse_mapping = (
+                    remap_class_values_to_continuous(training_fc, self.label_property)
+                )
+                if class_mapping is not None:
+                    LOGGER.warning(
+                        f"Remapped {len(class_mapping)} class values to 0-based continuous integers"
+                    )
+                    training_fc_for_training = remapped_fc
+                else:
+                    training_fc_for_training = training_fc
+                    reverse_mapping = None
+            except Exception as e:
+                LOGGER.warning(
+                    f"Could not remap class values (may already be continuous): {e}. Using original values."
+                )
+                training_fc_for_training = training_fc
+                reverse_mapping = None
+
             # Create and train classifier
             # Note: smileNaiveBayes supports optional lambda parameter for smoothing
             classifier_params = {}
@@ -1421,7 +1717,7 @@ class NaiveBayesLearner:
             classifier = ee.Classifier.smileNaiveBayes(**classifier_params)
 
             trained_classifier = classifier.train(
-                features=training_fc,
+                features=training_fc_for_training,
                 classProperty=self.label_property,
                 inputProperties=feature_list,
             )
@@ -1437,6 +1733,7 @@ class NaiveBayesLearner:
                 credentials=training_data_connection.credentials,
                 gee_object=None,
                 classifier=trained_classifier,
+                reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
             )
 
             return classifier_connection
@@ -1444,438 +1741,6 @@ class NaiveBayesLearner:
         except Exception as e:
             LOGGER.error(f"Naive Bayes classifier training failed: {e}")
             raise
-
-
-############################################
-# Classifier Scorer
-############################################
-
-
-@knext.node(
-    name="Classifier Scorer",
-    node_type=knext.NodeType.MANIPULATOR,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "scorer.png",
-    id="classifierscorer",
-    after="naivebayeslearner",
-)
-@knext.input_port(
-    name="GEE Classifier Connection",
-    description="GEE Classifier connection with trained classifier model (from Learner nodes).",
-    port_type=google_earth_engine_port_type,
-)
-@knext.input_port(
-    name="Validation Data",
-    description="Validation FeatureCollection with class labels and features (from Sample Regions for Classification or Generate Training Points).",
-    port_type=google_earth_engine_port_type,
-)
-@knext.output_view(
-    name="Classification Accuracy Report",
-    description="HTML view showing comprehensive classification accuracy metrics",
-)
-class ClassifierScorer:
-    """Evaluates a trained classifier using validation data and displays comprehensive accuracy metrics.
-
-    This node evaluates the performance of a trained classifier by applying it to validation data
-    and computing various accuracy metrics including confusion matrix, overall accuracy, user's accuracy,
-    producer's accuracy, Kappa coefficient, and per-class metrics.
-
-    **Input Requirements:**
-
-    - **Classifier**: Trained classifier from any Learner node (Random Forest, CART, SVM, or Naive Bayes)
-    - **Validation Data**: FeatureCollection with class labels and features (same structure as training data)
-
-    **Metrics Computed:**
-
-    - **Overall Accuracy**: Percentage of correctly classified samples
-    - **Kappa Coefficient**: Agreement between predicted and actual classes (accounts for chance)
-    - **User's Accuracy (Recall)**: Accuracy from the user's perspective (per-class recall)
-    - **Producer's Accuracy (Precision)**: Accuracy from the producer's perspective (per-class precision)
-    - **Confusion Matrix**: Detailed matrix showing classification errors
-    - **Per-Class Metrics**: Individual class accuracy, precision, recall, and F1-score
-
-    **Use Cases:**
-
-    - Evaluate classifier performance on validation/test data
-    - Compare different classifier algorithms
-    - Identify classes with poor classification accuracy
-    - Validate model before applying to full image
-    - Generate accuracy reports for publications
-
-    **Reference:**
-    https://developers.google.com/earth-engine/guides/classification
-    """
-
-    label_property = knext.StringParameter(
-        "Label Property",
-        "Property name containing class labels in the validation FeatureCollection (e.g., 'class', 'landcover')",
-        default_value="class",
-    )
-
-    def configure(self, configure_context, input_schema):
-        return None
-
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        classifier_connection,
-        validation_data_connection,
-    ):
-        import ee
-        import logging
-        import json
-
-        LOGGER = logging.getLogger(__name__)
-
-        try:
-            # Get classifier and validation data
-            classifier = classifier_connection.classifier
-            validation_fc = validation_data_connection.gee_object
-
-            if classifier is None:
-                raise ValueError(
-                    "Classifier connection does not contain a trained classifier. "
-                    "Please connect a classifier from a Learner node."
-                )
-
-            if not isinstance(validation_fc, ee.FeatureCollection):
-                raise ValueError(
-                    "Validation data must be a FeatureCollection from 'Sample Regions for Classification' "
-                    "or 'Generate Training Points from Reference Image'"
-                )
-
-            # Get validation data size
-            try:
-                fc_size = validation_fc.size().getInfo()
-                LOGGER.warning(
-                    f"Evaluating classifier with {fc_size} validation samples"
-                )
-            except Exception:
-                LOGGER.warning(
-                    "Evaluating classifier with validation data (size check skipped)"
-                )
-
-            # Classify the validation data
-            classified_fc = validation_fc.classify(classifier, "classification")
-
-            # Compute error matrix
-            error_matrix = classified_fc.errorMatrix(
-                self.label_property, "classification"
-            )
-
-            # Get accuracy metrics
-            overall_accuracy = error_matrix.accuracy().getInfo()
-            kappa = error_matrix.kappa().getInfo()
-            consumers_accuracy = error_matrix.consumersAccuracy().getInfo()
-            producers_accuracy = error_matrix.producersAccuracy().getInfo()
-            confusion_matrix = error_matrix.array().getInfo()
-            order = error_matrix.order().getInfo()
-
-            # Calculate per-class metrics
-            # confusion_matrix is a 2D array where rows are actual classes and columns are predicted classes
-            per_class_metrics = []
-            for i, class_name in enumerate(order):
-                # True positives: diagonal element
-                tp = confusion_matrix[i][i]
-                # False positives: sum of column (excluding diagonal)
-                fp = sum(confusion_matrix[j][i] for j in range(len(order)) if j != i)
-                # False negatives: sum of row (excluding diagonal)
-                fn = sum(confusion_matrix[i][j] for j in range(len(order)) if j != i)
-                # True negatives: all other cells
-                tn = sum(
-                    confusion_matrix[j][k]
-                    for j in range(len(order))
-                    for k in range(len(order))
-                    if j != i and k != i
-                )
-
-                # Calculate metrics
-                total_actual = sum(confusion_matrix[i])
-                total_predicted = sum(confusion_matrix[j][i] for j in range(len(order)))
-
-                precision = tp / total_predicted if total_predicted > 0 else 0.0
-                recall = tp / total_actual if total_actual > 0 else 0.0
-                f1_score = (
-                    2 * (precision * recall) / (precision + recall)
-                    if (precision + recall) > 0
-                    else 0.0
-                )
-                user_accuracy = (
-                    consumers_accuracy[i] if i < len(consumers_accuracy) else 0.0
-                )
-                producer_accuracy = (
-                    producers_accuracy[i] if i < len(producers_accuracy) else 0.0
-                )
-
-                per_class_metrics.append(
-                    {
-                        "Class": str(class_name),
-                        "Total Actual": int(total_actual),
-                        "Total Predicted": int(total_predicted),
-                        "True Positives": int(tp),
-                        "False Positives": int(fp),
-                        "False Negatives": int(fn),
-                        "Precision": round(precision, 4),
-                        "Recall": round(recall, 4),
-                        "F1-Score": round(f1_score, 4),
-                        "User's Accuracy": round(user_accuracy, 4),
-                        "Producer's Accuracy": round(producer_accuracy, 4),
-                    }
-                )
-
-            # Create HTML report
-            html = self._create_html_report(
-                overall_accuracy,
-                kappa,
-                consumers_accuracy,
-                producers_accuracy,
-                confusion_matrix,
-                order,
-                per_class_metrics,
-            )
-
-            LOGGER.warning(
-                f"Classification evaluation completed: Overall Accuracy = {overall_accuracy:.4f}, Kappa = {kappa:.4f}"
-            )
-
-            return knext.view_html(html)
-
-        except Exception as e:
-            LOGGER.error(f"Classifier evaluation failed: {e}")
-            # Return error view
-            error_html = f"""
-            <div style="color: red; font-family: Arial, sans-serif; padding: 20px;">
-                <h2>❌ Classification Evaluation Error</h2>
-                <p><strong>Error:</strong> {str(e)}</p>
-                <p>Please check:</p>
-                <ul>
-                    <li>Classifier connection contains a trained classifier</li>
-                    <li>Validation data is a FeatureCollection with labels and features</li>
-                    <li>Label property name matches the actual property in validation data</li>
-                </ul>
-            </div>
-            """
-            return knext.view_html(error_html)
-
-    def _create_html_report(
-        self,
-        overall_accuracy,
-        kappa,
-        consumers_accuracy,
-        producers_accuracy,
-        confusion_matrix,
-        order,
-        per_class_metrics,
-    ):
-        """Create a comprehensive HTML report for classification accuracy."""
-
-        # Format confusion matrix as HTML table
-        confusion_table = "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; margin: 10px 0;'>\n"
-        confusion_table += "<tr><th>Actual \\ Predicted</th>"
-        for class_name in order:
-            confusion_table += (
-                f"<th style='background-color: #e0e0e0;'>{class_name}</th>"
-            )
-        confusion_table += "<th style='background-color: #d0d0d0;'>Total</th></tr>\n"
-
-        for i, actual_class in enumerate(order):
-            confusion_table += (
-                f"<tr><th style='background-color: #e0e0e0;'>{actual_class}</th>"
-            )
-            row_sum = sum(confusion_matrix[i])
-            for j, predicted_class in enumerate(order):
-                value = confusion_matrix[i][j]
-                # Highlight diagonal (correct predictions)
-                cell_style = (
-                    "background-color: #90EE90; font-weight: bold;"
-                    if i == j
-                    else "background-color: #FFB6C1;" if value > 0 else ""
-                )
-                confusion_table += f"<td style='{cell_style}'>{int(value)}</td>"
-            confusion_table += f"<td style='background-color: #d0d0d0; font-weight: bold;'>{int(row_sum)}</td></tr>\n"
-
-        # Add column totals
-        confusion_table += "<tr><th style='background-color: #d0d0d0;'>Total</th>"
-        for j in range(len(order)):
-            col_sum = sum(confusion_matrix[i][j] for i in range(len(order)))
-            confusion_table += f"<td style='background-color: #d0d0d0; font-weight: bold;'>{int(col_sum)}</td>"
-        total_all = sum(
-            confusion_matrix[i][j] for i in range(len(order)) for j in range(len(order))
-        )
-        confusion_table += f"<td style='background-color: #c0c0c0; font-weight: bold;'>{int(total_all)}</td></tr>\n"
-        confusion_table += "</table>"
-
-        # Format per-class metrics table
-        per_class_table = "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; margin: 10px 0; width: 100%;'>\n"
-        per_class_table += "<tr style='background-color: #4CAF50; color: white;'>"
-        per_class_table += "<th>Class</th><th>Total Actual</th><th>Total Predicted</th>"
-        per_class_table += (
-            "<th>True Positives</th><th>False Positives</th><th>False Negatives</th>"
-        )
-        per_class_table += "<th>Precision</th><th>Recall</th><th>F1-Score</th>"
-        per_class_table += "<th>User's Accuracy</th><th>Producer's Accuracy</th></tr>\n"
-
-        for metrics in per_class_metrics:
-            per_class_table += "<tr>"
-            per_class_table += f"<td><strong>{metrics['Class']}</strong></td>"
-            per_class_table += f"<td>{metrics['Total Actual']}</td>"
-            per_class_table += f"<td>{metrics['Total Predicted']}</td>"
-            per_class_table += f"<td>{metrics['True Positives']}</td>"
-            per_class_table += f"<td>{metrics['False Positives']}</td>"
-            per_class_table += f"<td>{metrics['False Negatives']}</td>"
-            per_class_table += f"<td>{metrics['Precision']:.4f}</td>"
-            per_class_table += f"<td>{metrics['Recall']:.4f}</td>"
-            per_class_table += f"<td>{metrics['F1-Score']:.4f}</td>"
-            user_acc = metrics["User's Accuracy"]
-            prod_acc = metrics["Producer's Accuracy"]
-            per_class_table += f"<td>{user_acc:.4f}</td>"
-            per_class_table += f"<td>{prod_acc:.4f}</td>"
-            per_class_table += "</tr>\n"
-        per_class_table += "</table>"
-
-        # Format consumers/producers accuracy arrays
-        consumers_str = ", ".join(
-            [f"{order[i]}: {consumers_accuracy[i]:.4f}" for i in range(len(order))]
-        )
-        producers_str = ", ".join(
-            [f"{order[i]}: {producers_accuracy[i]:.4f}" for i in range(len(order))]
-        )
-
-        # Create full HTML document
-        overall_accuracy_pct = overall_accuracy * 100
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>Classification Accuracy Report</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 20px;
-                    background-color: #f5f5f5;
-                }}
-                .container {{
-                    background-color: white;
-                    padding: 20px;
-                    border-radius: 8px;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }}
-                h1 {{
-                    color: #2c3e50;
-                    border-bottom: 3px solid #4CAF50;
-                    padding-bottom: 10px;
-                }}
-                h2 {{
-                    color: #34495e;
-                    margin-top: 30px;
-                    border-bottom: 2px solid #ecf0f1;
-                    padding-bottom: 5px;
-                }}
-                .metric-box {{
-                    background-color: #ecf0f1;
-                    padding: 15px;
-                    margin: 10px 0;
-                    border-radius: 5px;
-                    border-left: 4px solid #4CAF50;
-                }}
-                .metric-value {{
-                    font-size: 24px;
-                    font-weight: bold;
-                    color: #27ae60;
-                }}
-                .metric-label {{
-                    font-size: 14px;
-                    color: #7f8c8d;
-                    margin-top: 5px;
-                }}
-                table {{
-                    font-size: 12px;
-                }}
-                th {{
-                    text-align: center;
-                    font-weight: bold;
-                }}
-                td {{
-                    text-align: center;
-                }}
-                .summary-grid {{
-                    display: grid;
-                    grid-template-columns: repeat(2, 1fr);
-                    gap: 15px;
-                    margin: 20px 0;
-                }}
-                .info-text {{
-                    color: #7f8c8d;
-                    font-size: 13px;
-                    margin-top: 10px;
-                    font-style: italic;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>📊 Classification Accuracy Report</h1>
-                
-                <div class="summary-grid">
-                    <div class="metric-box">
-                        <div class="metric-value">{overall_accuracy:.4f}</div>
-                        <div class="metric-label">Overall Accuracy</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-value">{kappa:.4f}</div>
-                        <div class="metric-label">Kappa Coefficient</div>
-                    </div>
-                </div>
-
-                <h2>📈 Overall Metrics</h2>
-                <div style="margin: 15px 0;">
-                    <p><strong>Overall Accuracy:</strong> {overall_accuracy:.4f} ({overall_accuracy_pct:.2f}%)</p>
-                    <p><strong>Kappa Coefficient:</strong> {kappa:.4f}</p>
-                    <p class="info-text">
-                        Overall Accuracy: Percentage of correctly classified samples.<br>
-                        Kappa Coefficient: Agreement between predicted and actual classes (accounts for chance agreement).
-                        Values range from -1 to 1, where 1 indicates perfect agreement.
-                    </p>
-                </div>
-
-                <h2>🔢 Confusion Matrix</h2>
-                <p class="info-text">
-                    Rows represent actual classes, columns represent predicted classes.
-                    Green cells indicate correct predictions (diagonal), red cells indicate errors.
-                </p>
-                {confusion_table}
-
-                <h2>📋 Per-Class Metrics</h2>
-                <p class="info-text">
-                    <strong>Precision:</strong> Of all samples predicted as this class, how many were actually this class.<br>
-                    <strong>Recall (User's Accuracy):</strong> Of all actual samples of this class, how many were correctly predicted.<br>
-                    <strong>F1-Score:</strong> Harmonic mean of precision and recall.<br>
-                    <strong>Producer's Accuracy:</strong> Accuracy from the producer's perspective (omission error).
-                </p>
-                {per_class_table}
-
-                <h2>📊 User's Accuracy (Recall) by Class</h2>
-                <div style="margin: 15px 0;">
-                    <p>{consumers_str}</p>
-                    <p class="info-text">
-                        User's Accuracy: For each class, the percentage of samples predicted as that class that were actually that class.
-                    </p>
-                </div>
-
-                <h2>📊 Producer's Accuracy (Precision) by Class</h2>
-                <div style="margin: 15px 0;">
-                    <p>{producers_str}</p>
-                    <p class="info-text">
-                        Producer's Accuracy: For each class, the percentage of actual samples of that class that were correctly predicted.
-                    </p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-
-        return html
 
 
 ############################################
@@ -2010,10 +1875,365 @@ class ImageClassPredictor:
                     "Note: Probability map output may require classifier-specific implementation."
                 )
 
+            # Map prediction results back to original class values if reverse_mapping exists
+            reverse_mapping = classifier_connection.reverse_mapping
+            if reverse_mapping is not None:
+                LOGGER.warning(
+                    f"Mapping predictions back to original class values using reverse mapping: {reverse_mapping}"
+                )
+
+                # Build remap lists for Image.remap()
+                # reverse_mapping format: {0: 11, 1: 21, 2: 22, ...}
+                remap_from = list(reverse_mapping.keys())  # [0, 1, 2, ...]
+                remap_to = [
+                    reverse_mapping[idx] for idx in remap_from
+                ]  # [11, 21, 22, ...]
+
+                # Get the classification band name (usually 'classification')
+                classification_band = classified_image.bandNames().getInfo()[0]
+
+                # Remap the classification band
+                remapped_band = classified_image.select(classification_band).remap(
+                    remap_from, remap_to
+                )
+
+                # Replace the classification band with remapped values
+                classified_image = classified_image.addBands(
+                    remapped_band, overwrite=True
+                )
+
+                LOGGER.warning(
+                    "Successfully remapped predictions to original class values"
+                )
+
             LOGGER.warning("Successfully classified image")
 
             return knut.export_gee_connection(classified_image, image_connection)
 
         except Exception as e:
             LOGGER.error(f"Image classification failed: {e}")
+            raise
+
+
+############################################
+# Feature Collection Predictor
+############################################
+
+
+@knext.node(
+    name="Feature Collection Predictor",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "predictFC.png",
+    id="featurecollectionpredictor",
+    after="imageclasspredictor",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with features to classify (must contain the same band/property names used for training).",
+    port_type=google_earth_engine_port_type,
+)
+@knext.input_port(
+    name="GEE Classifier Connection",
+    description="GEE Classifier connection with trained classifier model (from Learner nodes).",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with prediction results added as a new property.",
+    port_type=google_earth_engine_port_type,
+)
+class FeatureCollectionPredictor:
+    """Applies a trained classifier to classify features in a Feature Collection.
+
+    This node uses a trained machine learning model to predict class labels
+    for each feature in a Feature Collection. The prediction is added as a
+    new property to each feature, allowing you to export and validate results.
+
+    **Input Requirements:**
+
+    - **Feature Collection**: Must contain the same band/property names used during training
+      (e.g., 'B2', 'B3', 'B4' if those were the training bands)
+    - **Classifier**: Trained classifier from Learner nodes (Random Forest Learner, CART Learner,
+      SVM Learner, or Naive Bayes Learner)
+
+    **Output:**
+
+    - Original Feature Collection with a new 'classification' property containing predicted class labels
+    - All original properties are preserved
+    - Can be exported to table for validation
+
+    **Common Use Cases:**
+
+    - **Validation**: Use `Generate Training Points from Reference Image` to create new validation points,
+      then use this node to predict their classes and compare with reference labels
+    - **Independent Testing**: Apply trained classifier to independent test datasets
+    - **Cross-Validation**: Predict on held-out validation sets
+    - **Spatial Validation**: Predict on features from different regions or time periods
+
+    **Workflow Example:**
+
+    1. Train classifier: `Sample Regions for Classification` → `Random Forest Learner`
+    2. Generate validation points: `Generate Training Points from Reference Image` (new random points)
+    3. Predict: `Feature Collection Predictor` (this node)
+    4. Export: `Feature Collection to Table` → Compare predictions with reference labels
+
+    **Band/Property Matching:**
+
+    - The Feature Collection must contain properties with the same names as the bands/features
+      used during training
+    - If training used 'B2', 'B3', 'B4', the Feature Collection must have these properties
+    - System properties (e.g., 'system:index') are automatically excluded
+
+    **Reference:**
+    https://developers.google.com/earth-engine/guides/classification
+    """
+
+    prediction_property = knext.StringParameter(
+        "Prediction Property Name",
+        "Name of the property to store prediction results (default: 'classification').",
+        default_value="classification",
+    )
+
+    def configure(self, configure_context, input_schema1, input_schema2):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+        classifier_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            # Get Feature Collection and classifier from connections
+            feature_collection = fc_connection.gee_object
+            classifier = classifier_connection.classifier
+
+            if not isinstance(feature_collection, ee.FeatureCollection):
+                raise ValueError(
+                    "Input must be a FeatureCollection (e.g., from 'Generate Training Points from Reference Image')"
+                )
+
+            if classifier is None:
+                raise ValueError(
+                    "Classifier connection does not contain a trained classifier. "
+                    "Please use a trained classifier from Learner nodes (Random Forest Learner, CART Learner, SVM Learner, or Naive Bayes Learner)."
+                )
+
+            # Classify the Feature Collection
+            # GEE's classify() method adds a new property with prediction results
+            classified_fc = feature_collection.classify(
+                classifier, outputName=self.prediction_property
+            )
+
+            # Map prediction results back to original class values if reverse_mapping exists
+            reverse_mapping = classifier_connection.reverse_mapping
+            if reverse_mapping is not None:
+                LOGGER.warning(
+                    f"Mapping predictions back to original class values using reverse mapping: {reverse_mapping}"
+                )
+
+                # Build remap lists for server-side remapping
+                # reverse_mapping format: {0: 11, 1: 21, 2: 22, ...}
+                remap_from = list(reverse_mapping.keys())  # [0, 1, 2, ...]
+                remap_to = [
+                    reverse_mapping[idx] for idx in remap_from
+                ]  # [11, 21, 22, ...]
+
+                def remap_prediction(feature):
+                    """Remap prediction from 0-based index to original class value"""
+                    predicted_value = feature.get(self.prediction_property)
+                    # Use ee.Algorithms.If chain for server-side mapping
+                    remapped_value = predicted_value  # Default to original value
+                    for idx, orig_val in zip(remap_from, remap_to):
+                        remapped_value = ee.Algorithms.If(
+                            ee.Number(predicted_value).eq(ee.Number(idx)),
+                            ee.Number(orig_val),
+                            remapped_value,
+                        )
+                    return feature.set(self.prediction_property, remapped_value)
+
+                classified_fc = classified_fc.map(remap_prediction)
+                LOGGER.warning(
+                    "Successfully remapped predictions to original class values"
+                )
+
+            LOGGER.warning(
+                f"Successfully classified Feature Collection with {self.prediction_property} property"
+            )
+
+            # Log sample count if available
+            try:
+                fc_size = feature_collection.size().getInfo()
+                LOGGER.warning(f"Classified {fc_size} features")
+            except Exception:
+                LOGGER.warning("Classified Feature Collection (size check skipped)")
+
+            return knut.export_gee_connection(classified_fc, fc_connection)
+
+        except Exception as e:
+            LOGGER.error(f"Feature Collection classification failed: {e}")
+            raise
+
+
+############################################
+# Classifier Scorer
+############################################
+
+
+@knext.node(
+    name="Classifier Scorer",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "scorer.png",
+    id="classifierscorer",
+    after="featurecollectionpredictor",
+)
+@knext.input_port(
+    name="Training Data",
+    description="Training data: FeatureCollection (from Sample Regions for Classification or Generate Training Points) with pixel values and class labels.",
+    port_type=google_earth_engine_port_type,
+)
+@knext.input_port(
+    name="GEE Classifier Connection",
+    description="GEE Classifier connection with trained classifier model (from Learner nodes).",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_port(
+    name="GEE Classifier Connection",
+    description="GEE Classifier connection (passed through unchanged).",
+    port_type=google_earth_engine_port_type,
+)
+@knext.output_table(
+    name="Training Accuracy Metrics",
+    description="Table containing per-class and overall classification accuracy metrics.",
+)
+class ClassifierScorer:
+    """Computes classification accuracy metrics for a trained classifier.
+
+    This node evaluates a trained classifier's performance on training data
+    by computing confusion matrix-based metrics. It can be connected to any
+    Learner node output to compute accuracy metrics independently.
+
+    **Input Requirements:**
+
+    - **Training Data**: FeatureCollection with the same structure used for training
+      (must contain label property and feature bands)
+    - **Classifier**: Trained classifier from Learner nodes
+
+    **Output Metrics:**
+
+    - **Per-Class**: TP, Precision, Recall, F-measure for each class
+    - **Overall**: Accuracy, Cohen's Kappa
+
+    **Use Cases:**
+
+    - Evaluate classifier performance on training data
+    - Compare different classifiers' performance
+    - Compute accuracy metrics separately from training (for performance optimization)
+
+    **Performance:**
+
+    - Uses optimized errorMatrix calculation (only 2 getInfo() calls)
+    - All metrics computed from confusion matrix on client side
+    - Can be run independently after training to save time during training phase
+
+    **Workflow Example:**
+
+    1. Train classifier: `Sample Regions` → `Random Forest Learner`
+    2. Compute accuracy: `Training Data` + `Classifier` → `Classifier Scorer` (this node)
+    3. Compare results: Use accuracy metrics to evaluate model performance
+    """
+
+    label_property = knext.StringParameter(
+        "Label Property",
+        "Name of the property containing class labels (e.g., 'landcover', 'LC'). Must match the label property used during training.",
+        default_value="landcover",
+    )
+
+    def configure(self, configure_context, input_schema1, input_schema2):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        training_data_connection,
+        classifier_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            # Get training FeatureCollection and classifier
+            training_fc = training_data_connection.gee_object
+            classifier = classifier_connection.classifier
+
+            if not isinstance(training_fc, ee.FeatureCollection):
+                raise ValueError(
+                    "Input must be a FeatureCollection from 'Sample Regions for Classification' or 'Generate Training Points from Reference Image'"
+                )
+
+            if classifier is None:
+                raise ValueError(
+                    "Classifier connection does not contain a trained classifier. "
+                    "Please use a trained classifier from Learner nodes (Random Forest Learner, CART Learner, SVM Learner, or Naive Bayes Learner)."
+                )
+
+            # Get reverse mapping from classifier connection
+            reverse_mapping = classifier_connection.reverse_mapping
+
+            # Check if training data needs remapping (same as in Learner nodes)
+            # We need to use the same remapped data that was used for training
+            try:
+                remapped_fc, class_mapping, _ = remap_class_values_to_continuous(
+                    training_fc, self.label_property
+                )
+                if class_mapping is not None:
+                    LOGGER.warning(
+                        f"Using remapped training data for accuracy calculation (same as training)"
+                    )
+                    training_fc_for_scoring = remapped_fc
+                else:
+                    training_fc_for_scoring = training_fc
+            except Exception as e:
+                LOGGER.warning(
+                    f"Could not remap training data (may already be continuous): {e}. Using original data."
+                )
+                training_fc_for_scoring = training_fc
+
+            # Compute training accuracy metrics
+            try:
+                metrics_df = compute_classification_metrics(
+                    training_fc_for_scoring,
+                    classifier,
+                    self.label_property,
+                    reverse_mapping,
+                )
+                LOGGER.warning("Successfully computed training accuracy metrics")
+            except Exception as e:
+                LOGGER.warning(f"Could not compute training accuracy metrics: {e}")
+                # Return empty DataFrame with correct structure
+                metrics_df = pd.DataFrame(
+                    columns=[
+                        "TP",
+                        "Precision",
+                        "Recall",
+                        "F-measure",
+                        "Accuracy",
+                        "Cohen's Kappa",
+                    ]
+                )
+
+            # Pass through classifier connection unchanged
+            return classifier_connection, knext.Table.from_pandas(metrics_df)
+
+        except Exception as e:
+            LOGGER.error(f"Classifier scoring failed: {e}")
             raise

@@ -77,11 +77,13 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         credentials=None,
         gee_object=None,  # add：GEE Object
         classifier=None,  # add：Classifier Object
+        reverse_mapping=None,  # add：Reverse mapping for class values
     ) -> None:
         super().__init__(spec)
         self._credentials = credentials
         self._gee_object = gee_object  # add：GEE Object
         self._classifier = classifier  # add：Classifier Object
+        self._reverse_mapping = reverse_mapping  # add：Reverse mapping
 
     @property
     def spec(self) -> GoogleEarthEngineObjectSpec:
@@ -100,6 +102,11 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         """Get stored classifier object (ee.Classifier)"""
         return self._classifier
 
+    @property
+    def reverse_mapping(self):
+        """Get reverse mapping for class values (maps 0-based indices back to original class values)"""
+        return self._reverse_mapping
+
     def to_connection_data(self):
         """
         Provide the data that makes up this ConnectionPortObject such that it can be used
@@ -109,6 +116,7 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
             "credentials": self._credentials,
             "gee_object": self._gee_object,  # add：transfer GEE Object
             "classifier": self._classifier,  # add：transfer Classifier Object
+            "reverse_mapping": self._reverse_mapping,  # add：transfer reverse mapping
         }
 
     @classmethod
@@ -126,7 +134,12 @@ class GoogleEarthEngineConnectionObject(ConnectionPortObject):
         credentials = data.get("credentials") if data else None
         gee_object = data.get("gee_object") if data else None  # add：GEE Object
         classifier = data.get("classifier") if data else None  # add：Classifier Object
-        return cls(spec, credentials, gee_object, classifier)  # add：transfer Objects
+        reverse_mapping = (
+            data.get("reverse_mapping") if data else None
+        )  # add：Reverse mapping
+        return cls(
+            spec, credentials, gee_object, classifier, reverse_mapping
+        )  # add：transfer Objects
 
 
 google_earth_engine_port_type = knext.port_type(
