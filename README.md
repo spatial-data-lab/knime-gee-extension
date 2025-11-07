@@ -1,6 +1,6 @@
-# gee
+# Earth Engine Extension
 
-KNIME Extension for Google Earth Engine
+KNIME Earth Engine Extension
 
 
 ## Package Organization
