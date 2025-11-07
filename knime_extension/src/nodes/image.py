@@ -8,6 +8,8 @@ import util.knime_utils as knut
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
+    gee_image_port_type,
+    gee_feature_collection_port_type,
 )
 
 # Category for GEE Image I/O nodes
@@ -45,7 +47,7 @@ __NODE_ICON_PATH = "icons/icon/image/"
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ImageReader:
     """Loads a single image from Google Earth Engine using the specified image ID.
@@ -80,7 +82,7 @@ class ImageReader:
 
         image = ee.Image(self.imagename)
 
-        return knut.export_gee_connection(image, gee_connection)
+        return knut.export_gee_image_connection(image, gee_connection)
 
 
 ############################################
@@ -99,12 +101,12 @@ class ImageReader:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with filtered image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ImageBandSelector:
     """Filters and selects specific bands from a Google Earth Engine image.
@@ -147,7 +149,7 @@ class ImageBandSelector:
 
         # Get image directly from connection object
         # No need to initialize GEE - it's already initialized in the same Python process!
-        image = image_connection.gee_object
+        image = image_connection.image
 
         # Only process if bands parameter is not empty
         if self.bands.strip():
@@ -169,7 +171,7 @@ class ImageBandSelector:
                 f"No specified bands found in image. Available bands: {original_bands}"
             )
 
-        return knut.export_gee_connection(image, image_connection)
+        return knut.export_gee_image_connection(image, image_connection)
 
 
 ############################################
@@ -188,7 +190,7 @@ class ImageBandSelector:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_view(
     name="Image Info View",
@@ -229,7 +231,7 @@ class ImageGetInfo:
 
         try:
             # Get image from connection (GEE already initialized)
-            image = image_connection.gee_object
+            image = image_connection.image
 
             # Get image information efficiently
             info = image.getInfo()
@@ -278,17 +280,17 @@ class ImageGetInfo:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.input_port(
-    name="Geometry",
-    description="Geometry to clip the image to (from GEE Feature Collection or Geometry).",
-    port_type=google_earth_engine_port_type,
+    name="GEE Feature Collection Connection",
+    description="Feature Collection defining the region to clip the image to.",
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with clipped image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ImageClip:
     """Clips a Google Earth Engine image to a specific geometry.
@@ -333,27 +335,19 @@ class ImageClip:
         LOGGER = logging.getLogger(__name__)
 
         # Get image from connection
-        image = image_connection.gee_object
+        image = image_connection.image
 
-        # Get geometry from connection
-        geometry_obj = geometry_connection.gee_object
+        # Get geometry from Feature Collection connection
+        feature_collection = geometry_connection.feature_collection
 
-        # Handle different geometry types
-        if isinstance(geometry_obj, ee.FeatureCollection):
-            geometry = geometry_obj.geometry()
-        elif isinstance(geometry_obj, ee.Feature):
-            geometry = geometry_obj.geometry()
-        elif isinstance(geometry_obj, ee.Geometry):
-            geometry = geometry_obj
-        else:
-            # Try to extract geometry
-            geometry = ee.Geometry(geometry_obj)
+        # Extract geometry from Feature Collection
+        geometry = feature_collection.geometry()
 
         # Clip the image
         clipped_image = image.clip(geometry)
 
         LOGGER.warning("Successfully clipped image to geometry")
-        return knut.export_gee_connection(clipped_image, image_connection)
+        return knut.export_gee_image_connection(clipped_image, image_connection)
 
 
 ############################################
@@ -377,7 +371,7 @@ def validate_output_path(path: str) -> None:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ImageExporter:
     """Exports a Google Earth Engine image to local storage.
@@ -446,7 +440,7 @@ class ImageExporter:
         LOGGER = logging.getLogger(__name__)
 
         # Get image from connection (GEE already initialized)
-        image = image_connection.gee_object
+        image = image_connection.image
 
         # Ensure output directory exists
         output_dir = os.path.dirname(self.output_path)
@@ -531,7 +525,7 @@ class ImageExporter:
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_view(
     name="Image Info View",
@@ -607,4 +601,6 @@ class GeoTiffToGEEImage:
         """
 
         # LOGGER.warning(f"Successfully imported GeoTIFF: {self.local_tiff_path}")
-        return knut.export_gee_connection(image, gee_connection), knext.view_html(html)
+        return knut.export_gee_image_connection(image, gee_connection), knext.view_html(
+            html
+        )

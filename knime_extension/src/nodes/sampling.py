@@ -8,6 +8,8 @@ import util.knime_utils as knut
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
+    gee_image_port_type,
+    gee_feature_collection_port_type,
 )
 
 # Category for GEE Tool nodes
@@ -30,7 +32,7 @@ __NODE_ICON_PATH = "icons/icon/sampling/"
 
 
 @knext.node(
-    name="Get Image Value by LatLon",
+    name="Local Point Reducer",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "latlonvalue.png",
@@ -38,58 +40,46 @@ __NODE_ICON_PATH = "icons/icon/sampling/"
 )
 @knext.input_table(
     name="Input Table",
-    description="Table containing ID, latitude, and longitude columns",
+    description="Table containing point geometries.",
 )
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_table(
     name="Output Table",
     description="Table with ID and extracted image values for each band",
 )
-class GetImageValueByLatLon:
-    """Extracts pixel values from a Google Earth Engine image at specified latitude/longitude coordinates.
+class ImageValueByPoint:
+    """Extracts pixel values from a Google Earth Engine image at point geometries.
 
-    This node extracts pixel values from a Google Earth Engine image at specified latitude/longitude coordinates,
-    creating a table with extracted values for each point. This node is useful for creating point-based datasets for statistical analysis,
-    sampling remote sensing data for ground truth validation, and generating training data for machine learning models.
-    The node uses efficient batch processing to handle large numbers of points quickly.
+    This node samples pixel values from a Google Earth Engine image for each point geometry
+    contained in the input table. It streamlines point-based extraction workflows by directly
+    consuming GeoTables (with geometry columns) instead of separate latitude/longitude columns.
+
+    Typical use cases include generating training samples, validating classification outputs,
+    or compiling point-based datasets for statistical analysis. The node automatically reprojects
+    geometries to WGS84 (EPSG:4326) before sampling and supports optional batch processing to
+    handle large point collections efficiently.
 
     **Input Requirements:**
 
-    - Table must contain ID, latitude, and longitude columns
+    - A geometry column containing Point (or MultiPoint) features; MultiPoints are reduced to their first point.
+    - Geometry CRS can be arbitrary; it will be transformed to WGS84 automatically.
 
-    - Coordinates should be in decimal degrees (WGS84)
+    **Output:**
 
-    - Scale parameter controls sampling resolution (default: 30m)
-
-    **Batch Processing:**
-
-    For large point datasets, batch processing is automatically enabled to handle
-    GEE's data transfer limits (~16MB). The node processes points in batches and
-    combines the results automatically.
-
-    **Note:** Data transfer between local systems and Google Earth Engine cloud is subject to GEE's transmission limits.
-    Batch processing helps avoid these limits for large datasets.
+    - All original columns from the input table (including existing ID columns) are preserved with their original dtypes.
+    - One additional column per image band contains the sampled pixel values for each point.
     """
 
-    id_column = knext.ColumnParameter(
-        "ID Column",
-        "Column containing unique identifiers for each point",
-        port_index=0,
-    )
-
-    latitude_column = knext.ColumnParameter(
-        "Latitude Column",
-        "Column containing latitude values",
-        port_index=0,
-    )
-
-    longitude_column = knext.ColumnParameter(
-        "Longitude Column",
-        "Column containing longitude values",
+    geometry_column = knext.ColumnParameter(
+        "Geometry Column",
+        "Column containing point geometries",
+        column_filter=knut.is_geo,
+        include_row_key=False,
+        include_none_column=False,
         port_index=0,
     )
 
@@ -111,6 +101,9 @@ class GetImageValueByLatLon:
     )
 
     def configure(self, configure_context, input_table_schema, input_binary_spec):
+        self.geometry_column = knut.column_exists_or_preset(
+            configure_context, self.geometry_column, input_table_schema, knut.is_geo
+        )
         return None
 
     def execute(
@@ -122,31 +115,68 @@ class GetImageValueByLatLon:
         import ee
         import logging
         import pandas as pd
+        import geopandas as gp
 
         LOGGER = logging.getLogger(__name__)
 
         # Get image directly from connection object
         # No need to initialize GEE - it's already initialized in the same Python process!
-        image = image_connection.gee_object
+        image = image_connection.image
 
-        # Convert input table to pandas DataFrame
+        # Convert input table to GeoDataFrame using provided geometry column
         df = input_table.to_pandas()
+
+        if self.geometry_column not in df.columns:
+            raise ValueError(
+                f"Geometry column '{self.geometry_column}' not found in input table"
+            )
+
+        gdf = gp.GeoDataFrame(df, geometry=self.geometry_column).copy()
+
+        if gdf.geometry.isnull().any():
+            raise ValueError(
+                "Geometry column contains null geometries. Please remove them."
+            )
+
+        # Ensure geometries are points
+        geom_types = set(gdf.geometry.geom_type.unique())
+        if not geom_types.issubset({"Point", "MultiPoint"}):
+            raise ValueError(
+                "Geometry column must contain only Point (or MultiPoint) geometries."
+            )
+
+        # Reproject to WGS84
+        if gdf.crs is None:
+            gdf.set_crs(epsg=4326, inplace=True)
+        else:
+            gdf = gdf.to_crs(epsg=4326)
+
+        # For MultiPoint geometries, take first point
+        gdf.geometry = gdf.geometry.apply(
+            lambda geom: geom.geoms[0] if geom.geom_type == "MultiPoint" else geom
+        )
+
+        # Create internal identifier for joining results while preserving original columns/dtypes
+        gdf.reset_index(drop=True, inplace=True)
+        gdf["_row_index"] = gdf.index.astype(int)
+        orig_df = gdf.copy()
+        orig_df = pd.DataFrame(orig_df)
 
         # Get image info to determine bands (optimized to only get band names)
         band_names = image.bandNames().getInfo()
 
-        LOGGER.warning(f"Processing {len(df)} points with {len(band_names)} bands")
+        LOGGER.warning(f"Processing {len(gdf)} points with {len(band_names)} bands")
 
         # Use batch processing if dataset is large (auto-detect)
-        use_batch = len(df) > 1000
+        use_batch = len(gdf) > 1000
 
         try:
             if use_batch:
                 LOGGER.warning(
                     f"Using batch processing with batch size {self.batch_size}"
                 )
-                output_df = self._extract_values_with_batch(
-                    df,
+                band_df = self._extract_values_with_batch(
+                    gdf,
                     image,
                     band_names,
                     self.scale,
@@ -156,13 +186,14 @@ class GetImageValueByLatLon:
                 )
             else:
                 # Direct processing for small datasets
-                output_df = self._extract_values_direct(
-                    df, image, band_names, self.scale
+                band_df = self._extract_values_direct(
+                    gdf, image, band_names, self.scale
                 )
 
-            LOGGER.warning(f"Successfully extracted values for {len(output_df)} points")
+            result_df = self._assemble_results(orig_df, band_df, band_names)
+            LOGGER.warning(f"Successfully extracted values for {len(result_df)} points")
 
-            return knext.Table.from_pandas(output_df)
+            return knext.Table.from_pandas(result_df)
 
         except Exception as e:
             # If direct processing fails, try batch processing
@@ -171,8 +202,8 @@ class GetImageValueByLatLon:
                     f"Direct processing failed ({e}), retrying with batch processing"
                 )
                 try:
-                    output_df = self._extract_values_with_batch(
-                        df,
+                    band_df = self._extract_values_with_batch(
+                        gdf,
                         image,
                         band_names,
                         self.scale,
@@ -180,10 +211,11 @@ class GetImageValueByLatLon:
                         LOGGER,
                         exec_context,
                     )
+                    result_df = self._assemble_results(orig_df, band_df, band_names)
                     LOGGER.warning(
-                        f"Successfully extracted values for {len(output_df)} points (using batch processing)"
+                        f"Successfully extracted values for {len(result_df)} points (using batch processing)"
                     )
-                    return knext.Table.from_pandas(output_df)
+                    return knext.Table.from_pandas(result_df)
                 except Exception as batch_error:
                     LOGGER.error(f"Batch processing also failed: {batch_error}")
                     raise
@@ -191,22 +223,21 @@ class GetImageValueByLatLon:
                 LOGGER.error(f"Extract image values failed: {e}")
                 raise
 
-    def _extract_values_direct(self, df, image, band_names, scale):
+    def _extract_values_direct(self, gdf, image, band_names, scale):
         """Extract values directly without batch processing"""
         import ee
         import pandas as pd
 
         features = []
-        for idx, row in df.iterrows():
-            pt = ee.Geometry.Point(
-                [float(row[self.longitude_column]), float(row[self.latitude_column])]
-            )
-            features.append(ee.Feature(pt, {"id": str(row[self.id_column])}))
+        for _, row in gdf.iterrows():
+            geometry = row.geometry
+            pt = ee.Geometry.Point([float(geometry.x), float(geometry.y)])
+            features.append(ee.Feature(pt, {"row_index": int(row["_row_index"])}))
         points_fc = ee.FeatureCollection(features)
 
         sampled = image.sampleRegions(
             collection=points_fc,
-            properties=["id"],
+            properties=["row_index"],
             scale=scale,
             geometries=True,
         )
@@ -214,25 +245,37 @@ class GetImageValueByLatLon:
         sampled_info = sampled.getInfo()
 
         results = []
-        for feature in sampled_info["features"]:
-            point_id = feature["properties"]["id"]
+        for feature in sampled_info.get("features", []):
+            point_id = feature.get("properties", {}).get("row_index")
+            if point_id is None:
+                continue
+            try:
+                row_index = int(point_id)
+            except (ValueError, TypeError):
+                row_index = int(float(point_id))
             band_values = {}
 
             for band_name in band_names:
-                band_values[band_name] = feature["properties"].get(band_name, None)
+                band_values[band_name] = feature.get("properties", {}).get(
+                    band_name, None
+                )
 
-            results.append({"id": point_id, **band_values})
+            results.append({"row_index": row_index, **band_values})
 
-        return pd.DataFrame(results)
+        if results:
+            result_df = pd.DataFrame(results)
+        else:
+            result_df = pd.DataFrame(columns=["row_index", *band_names])
+        return result_df
 
     def _extract_values_with_batch(
-        self, df, image, band_names, scale, batch_size, logger, exec_context=None
+        self, gdf, image, band_names, scale, batch_size, logger, exec_context=None
     ):
         """Extract values using batch processing"""
         import ee
         import pandas as pd
 
-        total_size = len(df)
+        total_size = len(gdf)
         num_batches = (total_size + batch_size - 1) // batch_size
         all_results = []
 
@@ -248,25 +291,23 @@ class GetImageValueByLatLon:
             end_idx = min((i + 1) * batch_size, total_size)
 
             # Get batch of points
-            batch_df = df.iloc[start_idx:end_idx]
+            batch_gdf = gdf.iloc[start_idx:end_idx].copy()
 
             try:
                 # Create Feature Collection for this batch
                 features = []
-                for idx, row in batch_df.iterrows():
-                    pt = ee.Geometry.Point(
-                        [
-                            float(row[self.longitude_column]),
-                            float(row[self.latitude_column]),
-                        ]
+                for _, row in batch_gdf.iterrows():
+                    geom = row.geometry
+                    pt = ee.Geometry.Point([float(geom.x), float(geom.y)])
+                    features.append(
+                        ee.Feature(pt, {"row_index": int(row["_row_index"])})
                     )
-                    features.append(ee.Feature(pt, {"id": str(row[self.id_column])}))
                 batch_fc = ee.FeatureCollection(features)
 
                 # Sample regions
                 sampled = image.sampleRegions(
                     collection=batch_fc,
-                    properties=["id"],
+                    properties=["row_index"],
                     scale=scale,
                     geometries=True,
                 )
@@ -275,20 +316,26 @@ class GetImageValueByLatLon:
                 sampled_info = sampled.getInfo()
 
                 batch_results = []
-                for feature in sampled_info["features"]:
-                    point_id = feature["properties"]["id"]
+                for feature in sampled_info.get("features", []):
+                    point_id = feature.get("properties", {}).get("row_index")
+                    if point_id is None:
+                        continue
+                    try:
+                        row_index = int(point_id)
+                    except (ValueError, TypeError):
+                        row_index = int(float(point_id))
                     band_values = {}
 
                     for band_name in band_names:
-                        band_values[band_name] = feature["properties"].get(
+                        band_values[band_name] = feature.get("properties", {}).get(
                             band_name, None
                         )
 
-                    batch_results.append({"id": point_id, **band_values})
+                    batch_results.append({"row_index": row_index, **band_values})
 
                 all_results.extend(batch_results)
                 logger.warning(
-                    f"Processed batch {i + 1}/{num_batches} ({len(batch_df)} points)"
+                    f"Processed batch {i + 1}/{num_batches} ({len(batch_gdf)} points)"
                 )
 
             except Exception as e:
@@ -296,46 +343,48 @@ class GetImageValueByLatLon:
                     f"Batch {i + 1} failed: {e}, trying smaller batch size..."
                 )
                 # Try with smaller batches for this range
-                smaller_batch = max(len(batch_df) // 2, 50)
+                smaller_batch = max(len(batch_gdf) // 2, 50)
                 sub_results = []
 
                 for j in range(start_idx, end_idx, smaller_batch):
                     sub_end_idx = min(j + smaller_batch, end_idx)
-                    sub_batch_df = df.iloc[j:sub_end_idx]
+                    sub_batch_gdf = gdf.iloc[j:sub_end_idx].copy()
 
                     try:
                         sub_features = []
-                        for idx, row in sub_batch_df.iterrows():
-                            pt = ee.Geometry.Point(
-                                [
-                                    float(row[self.longitude_column]),
-                                    float(row[self.latitude_column]),
-                                ]
-                            )
+                        for _, row in sub_batch_gdf.iterrows():
+                            geom = row.geometry
+                            pt = ee.Geometry.Point([float(geom.x), float(geom.y)])
                             sub_features.append(
-                                ee.Feature(pt, {"id": str(row[self.id_column])})
+                                ee.Feature(pt, {"row_index": int(row["_row_index"])})
                             )
                         sub_batch_fc = ee.FeatureCollection(sub_features)
 
                         sub_sampled = image.sampleRegions(
                             collection=sub_batch_fc,
-                            properties=["id"],
+                            properties=["row_index"],
                             scale=scale,
                             geometries=True,
                         )
 
                         sub_sampled_info = sub_sampled.getInfo()
 
-                        for feature in sub_sampled_info["features"]:
-                            point_id = feature["properties"]["id"]
+                        for feature in sub_sampled_info.get("features", []):
+                            point_id = feature.get("properties", {}).get("row_index")
+                            if point_id is None:
+                                continue
+                            try:
+                                row_index = int(point_id)
+                            except (ValueError, TypeError):
+                                row_index = int(float(point_id))
                             band_values = {}
 
                             for band_name in band_names:
-                                band_values[band_name] = feature["properties"].get(
-                                    band_name, None
-                                )
+                                band_values[band_name] = feature.get(
+                                    "properties", {}
+                                ).get(band_name, None)
 
-                            sub_results.append({"id": point_id, **band_values})
+                            sub_results.append({"row_index": row_index, **band_values})
 
                     except Exception as sub_error:
                         logger.error(
@@ -350,7 +399,32 @@ class GetImageValueByLatLon:
         if exec_context is not None:
             exec_context.set_progress(0.8, "Combining results...")
 
-        return pd.DataFrame(all_results)
+        if all_results:
+            return pd.DataFrame(all_results)
+        return pd.DataFrame(columns=["row_index", *band_names])
+
+    def _assemble_results(self, original_df, band_df, band_names):
+        import pandas as pd
+
+        if band_df is None or band_df.empty:
+            band_df = pd.DataFrame(columns=["row_index", *band_names])
+        else:
+            band_df = band_df.copy()
+
+        if "row_index" not in band_df.columns:
+            band_df["row_index"] = pd.Series(dtype="Int64")
+        else:
+            band_df["row_index"] = band_df["row_index"].apply(
+                lambda v: int(v) if v is not None and not pd.isna(v) else None
+            )
+
+        band_df.rename(columns={"row_index": "_row_index"}, inplace=True)
+
+        result_df = original_df.merge(band_df, on="_row_index", how="left")
+        if "_row_index" in result_df.columns:
+            result_df.drop(columns=["_row_index"], inplace=True)
+
+        return result_df
 
 
 ############################################
@@ -359,7 +433,7 @@ class GetImageValueByLatLon:
 
 
 @knext.node(
-    name="Local GeoTable Reducer",
+    name="Local Region Reducer",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "LocalTableReducer.png",
@@ -372,7 +446,7 @@ class GetImageValueByLatLon:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_table(
     name="Output Table",
@@ -474,7 +548,7 @@ class LocalGeoTableReducer:
 
         # Get image directly from connection object
         # No need to initialize GEE - it's already initialized in the same Python process!
-        image = image_connection.gee_object
+        image = image_connection.image
 
         # Map each reduction method to its corresponding ee.Reducer
         reducer_map = {
@@ -575,17 +649,17 @@ class LocalGeoTableReducer:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with regions for statistics.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with statistics added as properties.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class ReduceRegions:
     """Performs server-side zonal statistics on GEE images using GEE Feature Collections.
@@ -671,8 +745,8 @@ class ReduceRegions:
 
         try:
             # Get image and feature collection from connections
-            image = image_connection.gee_object
-            feature_collection = fc_connection.gee_object
+            image = image_connection.image
+            feature_collection = fc_connection.feature_collection
 
             # Parse reducer methods
             reduce_methods = [
@@ -696,7 +770,7 @@ class ReduceRegions:
 
             # Return Feature Collection instead of table
             # User can use Feature Collection to Table node to convert if needed
-            return knut.export_gee_connection(stats, fc_connection)
+            return knut.export_gee_feature_collection_connection(stats, fc_connection)
 
         except Exception as e:
             LOGGER.error(f"Reduce regions failed: {e}")
@@ -750,17 +824,17 @@ class ReduceRegions:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with classified image (single band with class codes).",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with regions for counting pixels by class.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with pixel counts for each class added as properties.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class CountByClass:
     """Counts pixels by classification class within each feature of a Feature Collection.
@@ -849,8 +923,8 @@ class CountByClass:
 
         try:
             # Get image and feature collection from connections
-            image = image_connection.gee_object
-            feature_collection = fc_connection.gee_object
+            image = image_connection.image
+            feature_collection = fc_connection.feature_collection
 
             # Get category codes
             if self.auto_detect_classes:
@@ -1001,7 +1075,9 @@ class CountByClass:
             )
 
             # Return Feature Collection with counts
-            return knut.export_gee_connection(result_fc, fc_connection)
+            return knut.export_gee_feature_collection_connection(
+                result_fc, fc_connection
+            )
 
         except Exception as e:
             LOGGER.error(f"Count by class failed: {e}")

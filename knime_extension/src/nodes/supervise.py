@@ -11,6 +11,12 @@ from util.common import (
     GoogleEarthEngineConnectionObject,
     GoogleEarthEngineObjectSpec,
     google_earth_engine_port_type,
+    GEEImageConnectionObject,
+    GEEFeatureCollectionConnectionObject,
+    GEEClassifierConnectionObject,
+    gee_image_port_type,
+    gee_feature_collection_port_type,
+    gee_classifier_port_type,
 )
 
 # Category for GEE Supervised Classification nodes
@@ -236,34 +242,34 @@ def compute_classification_metrics(
 
 
 ############################################
-# Generate Training Points from Reference Image
+# Label Points from Image
 ############################################
 
 
 @knext.node(
-    name="Generate Training Points from Reference Image",
+    name="Label Points from Image",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "generatePoints.png",
+    icon_path=__NODE_ICON_PATH + "PointLabel.png",
     id="generatetrainingpoints",
     after="",
 )
 @knext.input_port(
     name="Reference Classification Image",
     description="Reference classification image (e.g., NLCD) with class values in one band.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.input_port(
     name="Feature Image",
     description="Multi-band image for feature extraction (e.g., Sentinel-2, Landsat). Band values will be extracted at sample points.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with sampled training data (pixel values and class labels).",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
-class GenerateTrainingPointsFromReference:
+class LabelPointsFromImage:
     """Generates random training points from a reference classification image with band values.
 
     This node creates a FeatureCollection of random sample points from a reference
@@ -361,8 +367,8 @@ class GenerateTrainingPointsFromReference:
 
         try:
             # Get images
-            reference_image = reference_image_connection.gee_object
-            feature_image = feature_image_connection.gee_object
+            reference_image = reference_image_connection.image
+            feature_image = feature_image_connection.image
 
             # Determine sampling region using intersection of both image geometries
             ref_geom = reference_image.geometry()
@@ -457,7 +463,9 @@ class GenerateTrainingPointsFromReference:
             except Exception:
                 LOGGER.warning("Sampling completed (size check skipped)")
 
-            return knut.export_gee_connection(sampled, reference_image_connection)
+            return knut.export_gee_feature_collection_connection(
+                sampled, reference_image_connection
+            )
 
         except Exception as e:
             LOGGER.error(f"Generate training points failed: {e}")
@@ -465,32 +473,32 @@ class GenerateTrainingPointsFromReference:
 
 
 ############################################
-# Sample Regions for Classification
+# Label Points from Feature Collection
 ############################################
 
 
 @knext.node(
-    name="Sample Regions for Classification",
+    name="Label Points from Feature Collection",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "sampleRegions.png",
+    icon_path=__NODE_ICON_PATH + "LabelFeature.png",
     id="sampleregions",
     after="",
 )
 @knext.input_port(
-    name="GEE Image Connection",
-    description="GEE Image connection with multi-band image for feature extraction.",
-    port_type=google_earth_engine_port_type,
+    name="Training Data Connection",
+    description="GEE Feature Collection connection with polygons or points containing class labels.",
+    port_type=gee_feature_collection_port_type,
 )
 @knext.input_port(
-    name="Training Data Connection",
-    description="GEE connection with training data. Polygon mode: FeatureCollection with labeled polygons. Point mode: Reference classification Image or FeatureCollection of training points.",
-    port_type=google_earth_engine_port_type,
+    name="GEE Image Connection",
+    description="GEE Image connection with multi-band image for feature extraction.",
+    port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with sampled training data (pixel values and class labels).",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class SampleRegionsForClassification:
     """Samples pixel values from an image to create training data for classification.
@@ -501,23 +509,22 @@ class SampleRegionsForClassification:
     **Sampling Modes:**
 
     1. **Polygon Mode** (default): Samples all pixels within training polygons
-       - Input: Image + FeatureCollection with labeled polygons
+       - Input ports: FeatureCollection with labeled polygons (first port) + Image with spectral bands (second port)
        - Use when: You have manually drawn training polygons
 
-    2. **Point Mode**: Samples random points from a reference classification image
-       - Input: Image + Reference classification image (e.g., NLCD)
-       - Use when: You have a reference classification map (e.g., NLCD, existing land cover map)
+    2. **Point Mode**: Uses pre-generated points (random/stratified/field samples) with class labels
+       - Input ports: FeatureCollection of labeled point samples (first port) + Image with spectral bands (second port)
+       - Use when: You already have sample points with known class labels
 
     **Input Requirements:**
 
-    - **Image**: Multi-band image with spectral information (e.g., Sentinel-2, Landsat)
-    - **Polygon Mode**: Feature Collection with labeled polygons (one property contains class labels)
-    - **Point Mode**: Reference classification image (e.g., NLCD) with class values
+    - **Training Data (first port)**: Feature Collection containing geometries (polygons or points) with a class label property
+    - **Image (second port)**: Multi-band image with spectral information (e.g., Sentinel-2, Landsat)
 
     **Sampling Process:**
 
     - **Polygon Mode**: Extracts all pixels within each training polygon
-    - **Point Mode**: Generates random sample points from reference image, then extracts values
+    - **Point Mode**: Uses provided point samples and extracts band values at each point
     - Creates a FeatureCollection with one feature per pixel (band values + class label + geometry)
     - Supports large datasets with efficient server-side processing
     - Output can be directly used for training classifiers or converted to table if needed
@@ -528,14 +535,14 @@ class SampleRegionsForClassification:
     - Sample vegetation indices for crop type mapping
     - Extract spectral signatures for material identification
     - Generate balanced datasets for machine learning
-    - Use reference maps (NLCD, etc.) to automatically generate training data
+    - Use nodes such as "Label Random Points from Reference" to derive labeled samples from reference maps
 
     **Performance Tips:**
 
     - Lower scale values provide more samples but may be slower
     - Use tile_scale > 1.0 for large training areas
     - Ensure sufficient samples per class (minimum 100-200 recommended)
-    - Point mode: Adjust numPixels to control sample size
+    - Point mode: Provide a sufficient number of labeled point samples for each class
 
     **Workflow:**
 
@@ -556,9 +563,9 @@ class SampleRegionsForClassification:
 
     label_property = knext.StringParameter(
         "Label Property",
-        "Property name containing class labels in the training Feature Collection (e.g., 'class', 'LC', 'landcover'). Only used in Polygon mode.",
+        "Property name containing class labels in the training Feature Collection (e.g., 'class', 'LC', 'landcover').",
         default_value="class",
-    ).rule(knext.OneOf(sampling_mode, ["Polygon"]), knext.Effect.SHOW)
+    )
 
     bands = knext.StringParameter(
         "Bands",
@@ -583,33 +590,14 @@ class SampleRegionsForClassification:
         is_advanced=True,
     )
 
-    # Point mode parameters
-    num_pixels = knext.IntParameter(
-        "Number of Pixels",
-        "Number of random sample points to generate from reference image (only used in Point mode)",
-        default_value=5000,
-        min_value=100,
-        max_value=100000,
-        is_advanced=True,
-    ).rule(knext.OneOf(sampling_mode, ["Point"]), knext.Effect.SHOW)
-
-    seed = knext.IntParameter(
-        "Random Seed",
-        "Random seed for reproducible sampling (only used in Point mode)",
-        default_value=0,
-        min_value=0,
-        max_value=10000,
-        is_advanced=True,
-    ).rule(knext.OneOf(sampling_mode, ["Point"]), knext.Effect.SHOW)
-
     def configure(self, configure_context, input_schema1, input_schema2):
         return None
 
     def execute(
         self,
         exec_context: knext.ExecutionContext,
-        image_connection,
         fc_connection,
+        image_connection,
     ):
         import ee
         import logging
@@ -617,9 +605,9 @@ class SampleRegionsForClassification:
         LOGGER = logging.getLogger(__name__)
 
         try:
-            # Get image and feature collection from connections
-            image = image_connection.gee_object
-            training_fc = fc_connection.gee_object
+            # Get training feature collection and image from connections
+            training_fc = fc_connection.feature_collection
+            image = image_connection.image
 
             # Select bands if specified
             if self.bands:
@@ -630,6 +618,13 @@ class SampleRegionsForClassification:
                 # Use all bands
                 band_list = image.bandNames().getInfo()
                 LOGGER.warning(f"Using all bands: {band_list}")
+
+            # Validate training data type
+            if not isinstance(training_fc, ee.FeatureCollection):
+                raise ValueError(
+                    "Training data input must be a FeatureCollection. "
+                    "Please provide labeled polygons or points as a FeatureCollection."
+                )
 
             # Sample based on mode
             if self.sampling_mode == "Polygon":
@@ -654,115 +649,70 @@ class SampleRegionsForClassification:
                     LOGGER.warning("Sampling completed (size check skipped)")
 
                 # Return FeatureCollection directly
-                return knut.export_gee_connection(sampled, image_connection)
+                return knut.export_gee_feature_collection_connection(
+                    sampled, image_connection
+                )
 
             else:
-                # Point mode: use points from reference image or pre-generated points
-                LOGGER.warning(f"Point mode: Using training points from second input")
+                # Point mode: sample at provided point locations
+                LOGGER.warning(
+                    "Point mode: Using supplied FeatureCollection of training points"
+                )
 
-                # Check if second input is Image (reference classification) or FeatureCollection (pre-generated points)
-                if isinstance(training_fc, ee.Image):
-                    # Second input is a reference classification image
-                    reference_image = training_fc
-                    LOGGER.warning("Second input is a reference classification image")
+                sample_points = training_fc
 
-                    # Get the label band name
-                    label_band = reference_image.bandNames().get(0).getInfo()
-                    LOGGER.warning(f"Using label band: {label_band}")
-
-                    # Generate random sample points from reference image
-                    sample_points = reference_image.sample(
-                        region=image.geometry(),
-                        scale=self.scale,
-                        numPixels=self.num_pixels,
-                        seed=self.seed,
-                        geometries=True,
+                sample_feature_info = sample_points.first().getInfo()
+                if sample_feature_info is None:
+                    raise ValueError(
+                        "Training points FeatureCollection is empty. "
+                        "Provide at least one feature with a class label."
                     )
 
+                available_props = list(sample_feature_info.get("properties", {}).keys())
+                system_props = ["system:index", "system:time_start"]
+                band_names = set(band_list) if band_list else set()
+
+                preferred_label = (self.label_property or "").strip()
+                label_prop = None
+                if preferred_label and preferred_label in available_props:
+                    label_prop = preferred_label
                     LOGGER.warning(
-                        f"Generated {sample_points.size().getInfo()} sample points"
+                        f"Using user-specified label property '{label_prop}'"
                     )
-
-                    # Extract values from the image at these points
-                    sampled = image.sampleRegions(
-                        collection=sample_points,
-                        properties=[label_band],
-                        scale=self.scale,
-                        tileScale=self.tile_scale,
-                    )
-
-                    # Get sample count for logging
-                    try:
-                        sample_count = sampled.size().getInfo()
-                        LOGGER.warning(
-                            f"Successfully sampled {sample_count} training pixels from reference image"
-                        )
-                    except Exception:
-                        LOGGER.warning("Sampling completed (size check skipped)")
-
-                    # Return FeatureCollection directly
-                    return knut.export_gee_connection(sampled, image_connection)
-
-                elif isinstance(training_fc, ee.FeatureCollection):
-                    # Second input is a FeatureCollection of pre-generated points
-                    # (e.g., from "Generate Training Points from Reference Image" node)
-                    # This FeatureCollection may already contain band values, or may only contain labels
-                    sample_points = training_fc
-                    LOGGER.warning(
-                        "Second input is a FeatureCollection of training points"
-                    )
-
-                    # Find the label property (should be in the properties)
-                    # Try common names first
-                    sample_feature = sample_points.first().getInfo()
-                    available_props = list(sample_feature.get("properties", {}).keys())
-
-                    # Find label property (exclude system properties and band names)
-                    system_props = ["system:index", "system:time_start"]
-                    # Get band names to exclude from label search
-                    band_names = set(band_list) if band_list else set()
-                    label_prop = None
+                else:
                     for prop in available_props:
                         if prop not in system_props and prop not in band_names:
                             label_prop = prop
+                            LOGGER.warning(
+                                f"Auto-detected label property '{label_prop}' in training points"
+                            )
                             break
 
-                    if label_prop is None:
-                        raise ValueError(
-                            "Could not find label property in training points. "
-                            "Ensure the FeatureCollection has a property with class labels."
-                        )
-
-                    LOGGER.warning(f"Using label property: {label_prop}")
-
-                    # Extract values from the image at these points
-                    # This will add/update band values while preserving the label property
-                    sampled = image.sampleRegions(
-                        collection=sample_points,
-                        properties=[label_prop],  # Preserve label property
-                        scale=self.scale,
-                        tileScale=self.tile_scale,
-                    )
-
-                    # Get sample count for logging
-                    try:
-                        sample_count = sampled.size().getInfo()
-                        LOGGER.warning(
-                            f"Successfully sampled {sample_count} training pixels from pre-generated points"
-                        )
-                    except Exception:
-                        LOGGER.warning("Sampling completed (size check skipped)")
-
-                    # Return FeatureCollection directly
-                    return knut.export_gee_connection(sampled, image_connection)
-
-                else:
+                if label_prop is None:
                     raise ValueError(
-                        "Point mode requires either:\n"
-                        "1. A reference classification Image as the second input, OR\n"
-                        "2. A FeatureCollection of training points (from 'Generate Training Points from Reference Image' node)\n\n"
-                        f"Received type: {type(training_fc)}"
+                        "Could not determine the label property in training points. "
+                        "Please ensure the FeatureCollection has a class label column and/or set the 'Label Property' parameter."
                     )
+
+                # Extract values from the image at the supplied point locations
+                sampled = image.sampleRegions(
+                    collection=sample_points,
+                    properties=[label_prop],
+                    scale=self.scale,
+                    tileScale=self.tile_scale,
+                )
+
+                try:
+                    sample_count = sampled.size().getInfo()
+                    LOGGER.warning(
+                        f"Successfully sampled {sample_count} training pixels from provided points"
+                    )
+                except Exception:
+                    LOGGER.warning("Sampling completed (size check skipped)")
+
+                return knut.export_gee_feature_collection_connection(
+                    sampled, image_connection
+                )
 
         except Exception as e:
             LOGGER.error(f"Sample regions for classification failed: {e}")
@@ -778,19 +728,19 @@ class SampleRegionsForClassification:
     name="Random Forest Learner",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "trainRF.png",
+    icon_path=__NODE_ICON_PATH + "RandomForest.png",
     id="randomforestlearner",
     after="sampleregions",
 )
 @knext.input_port(
     name="Training Data",
     description="Training data: FeatureCollection (from Sample Regions for Classification or Generate Training Points) with pixel values and class labels.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Classifier Connection",
     description="GEE Classifier connection with trained Random Forest model.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_classifier_port_type,
 )
 class RandomForestLearner:
     """Trains a Random Forest classifier using training data.
@@ -903,7 +853,7 @@ class RandomForestLearner:
 
         try:
             # Get training FeatureCollection
-            training_fc = training_data_connection.gee_object
+            training_fc = training_data_connection.feature_collection
 
             if not isinstance(training_fc, ee.FeatureCollection):
                 raise ValueError(
@@ -1022,13 +972,13 @@ class RandomForestLearner:
             )
 
             # Create classifier connection object using credentials from training data connection
-            spec = GoogleEarthEngineObjectSpec(training_data_connection.spec.project_id)
-            classifier_connection = GoogleEarthEngineConnectionObject(
-                spec=spec,
-                credentials=training_data_connection.credentials,
-                gee_object=None,
+            classifier_connection = knut.export_gee_classifier_connection(
                 classifier=trained_classifier,
+                existing_connection=training_data_connection,
+                training_data=training_fc_for_training,  # Store remapped training data
+                label_property=self.label_property,
                 reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
+                input_properties=feature_list,  # Store bands/features used for training
             )
 
             return classifier_connection
@@ -1047,19 +997,19 @@ class RandomForestLearner:
     name="CART Learner",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "trainCART.png",
+    icon_path=__NODE_ICON_PATH + "cart.png",
     id="cartlearner",
     after="randomforestlearner",
 )
 @knext.input_port(
     name="Training Data",
     description="Training data: FeatureCollection (from Sample Regions for Classification or Generate Training Points) with pixel values and class labels.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Classifier Connection",
     description="GEE Classifier connection with trained CART model.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_classifier_port_type,
 )
 class CARTLearner:
     """Trains a CART (Classification and Regression Tree) classifier.
@@ -1147,7 +1097,7 @@ class CARTLearner:
 
         try:
             # Get training FeatureCollection
-            training_fc = training_data_connection.gee_object
+            training_fc = training_data_connection.feature_collection
 
             if not isinstance(training_fc, ee.FeatureCollection):
                 raise ValueError(
@@ -1250,13 +1200,13 @@ class CARTLearner:
             )
 
             # Create classifier connection object using credentials from training data connection
-            spec = GoogleEarthEngineObjectSpec(training_data_connection.spec.project_id)
-            classifier_connection = GoogleEarthEngineConnectionObject(
-                spec=spec,
-                credentials=training_data_connection.credentials,
-                gee_object=None,
+            classifier_connection = knut.export_gee_classifier_connection(
                 classifier=trained_classifier,
+                existing_connection=training_data_connection,
+                training_data=training_fc_for_training,  # Store remapped training data
+                label_property=self.label_property,
                 reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
+                input_properties=feature_list,  # Store bands/features used for training
             )
 
             return classifier_connection
@@ -1275,19 +1225,19 @@ class CARTLearner:
     name="SVM Learner",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "trainSVM.png",
+    icon_path=__NODE_ICON_PATH + "SVM.png",
     id="svmlearner",
     after="cartlearner",
 )
 @knext.input_port(
     name="Training Data",
     description="Training data: FeatureCollection (from Sample Regions for Classification or Generate Training Points) with pixel values and class labels.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Classifier Connection",
     description="GEE Classifier connection with trained SVM model.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_classifier_port_type,
 )
 class SVMLearner:
     """Trains a Support Vector Machine (SVM) classifier.
@@ -1386,7 +1336,7 @@ class SVMLearner:
 
         try:
             # Get training FeatureCollection
-            training_fc = training_data_connection.gee_object
+            training_fc = training_data_connection.feature_collection
 
             if not isinstance(training_fc, ee.FeatureCollection):
                 raise ValueError(
@@ -1497,13 +1447,13 @@ class SVMLearner:
             )
 
             # Create classifier connection object using credentials from training data connection
-            spec = GoogleEarthEngineObjectSpec(training_data_connection.spec.project_id)
-            classifier_connection = GoogleEarthEngineConnectionObject(
-                spec=spec,
-                credentials=training_data_connection.credentials,
-                gee_object=None,
+            classifier_connection = knut.export_gee_classifier_connection(
                 classifier=trained_classifier,
+                existing_connection=training_data_connection,
+                training_data=training_fc_for_training,  # Store remapped training data
+                label_property=self.label_property,
                 reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
+                input_properties=feature_list,  # Store bands/features used for training
             )
 
             return classifier_connection
@@ -1522,19 +1472,19 @@ class SVMLearner:
     name="Naive Bayes Learner",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "trainNB.png",
+    icon_path=__NODE_ICON_PATH + "NaiveBayes.png",
     id="naivebayeslearner",
     after="svmlearner",
 )
 @knext.input_port(
     name="Training Data",
     description="Training data: FeatureCollection (from Sample Regions for Classification or Generate Training Points) with pixel values and class labels.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Classifier Connection",
     description="GEE Classifier connection with trained Naive Bayes model.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_classifier_port_type,
 )
 class NaiveBayesLearner:
     """Trains a Naive Bayes classifier using SMILE implementation.
@@ -1620,7 +1570,7 @@ class NaiveBayesLearner:
 
         try:
             # Get training FeatureCollection
-            training_fc = training_data_connection.gee_object
+            training_fc = training_data_connection.feature_collection
 
             if not isinstance(training_fc, ee.FeatureCollection):
                 raise ValueError(
@@ -1727,13 +1677,13 @@ class NaiveBayesLearner:
             )
 
             # Create classifier connection object using credentials from training data connection
-            spec = GoogleEarthEngineObjectSpec(training_data_connection.spec.project_id)
-            classifier_connection = GoogleEarthEngineConnectionObject(
-                spec=spec,
-                credentials=training_data_connection.credentials,
-                gee_object=None,
+            classifier_connection = knut.export_gee_classifier_connection(
                 classifier=trained_classifier,
+                existing_connection=training_data_connection,
+                training_data=training_fc_for_training,  # Store remapped training data
+                label_property=self.label_property,
                 reverse_mapping=reverse_mapping,  # Store reverse mapping for prediction
+                input_properties=feature_list,  # Store bands/features used for training
             )
 
             return classifier_connection
@@ -1752,46 +1702,46 @@ class NaiveBayesLearner:
     name="Image Class Predictor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "classifyImage.png",
+    icon_path=__NODE_ICON_PATH + "ImagePredictor.png",
     id="imageclasspredictor",
     after="naivebayeslearner",
 )
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with image to classify.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.input_port(
     name="GEE Classifier Connection",
     description="GEE Classifier connection with trained classifier model (from Learner nodes).",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_classifier_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with classified image.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ImageClassPredictor:
     """Applies a trained classifier to classify an image.
 
     This node uses a trained machine learning model to classify pixels in an image,
-    producing a classification map with predicted class labels or probabilities.
+    producing a classification map with predicted class labels and probabilities.
 
     **Input Requirements:**
 
-    - **Image**: Multi-band image with the same bands used for training
+    - **Image**: Multi-band image (must contain the bands used during training)
     - **Classifier**: Trained classifier from Learner nodes (Random Forest Learner, CART Learner, SVM Learner, or Naive Bayes Learner)
 
-    **Output Modes:**
+    **Automatic Band Selection:**
 
-    - **Class Map**: Single-band image with class IDs (integer values)
-    - **Probability Map**: Multi-band image with class probabilities (0-1 for each class)
+    - The node automatically uses the same bands that were used during training
+    - Bands are inherited from the classifier connection (no manual selection needed)
+    - The input image must contain all the bands used during training
 
-    **Band Selection:**
+    **Output:**
 
-    - If bands are specified, only those bands are used for classification
-    - If empty, all bands in the image are used
-    - Bands must match the bands used during training
+    The node outputs an image with one band:
+    - **classification**: Class IDs (integer values, remapped to original class values if applicable)
 
     **Common Use Cases:**
 
@@ -1811,19 +1761,6 @@ class ImageClassPredictor:
     https://developers.google.com/earth-engine/guides/classification
     """
 
-    bands = knext.StringParameter(
-        "Bands",
-        "Comma-separated list of band names to use for classification (e.g., 'B2,B3,B4,B8'). Leave empty to use all bands. Must match training bands.",
-        default_value="",
-    )
-
-    output_mode = knext.StringParameter(
-        "Output Mode",
-        "Type of classification output",
-        default_value="class_map",
-        enum=["class_map", "probability_map"],
-    )
-
     def configure(self, configure_context, input_schema1, input_schema2):
         return None
 
@@ -1840,7 +1777,7 @@ class ImageClassPredictor:
 
         try:
             # Get image and classifier from connections
-            image = image_connection.gee_object
+            image = image_connection.image
             classifier = classifier_connection.classifier
 
             if classifier is None:
@@ -1849,31 +1786,22 @@ class ImageClassPredictor:
                     "Please use a trained classifier from Learner nodes (Random Forest Learner, CART Learner, SVM Learner, or Naive Bayes Learner)."
                 )
 
-            # Select bands if specified
-            if self.bands:
-                band_list = [b.strip() for b in self.bands.split(",")]
-                image = image.select(band_list)
-                LOGGER.warning(f"Using bands for classification: {band_list}")
-            else:
-                LOGGER.warning("Using all bands for classification")
-
-            # Classify the image
-            if self.output_mode == "class_map":
-                # Standard classification: class IDs only
-                classified_image = image.classify(classifier)
-                LOGGER.warning("Classified image with class map output")
-            else:
-                # Probability map: probabilities for each class
-                # Note: GEE's classify() returns class IDs.
-                # For probability maps, we need to use the classifier's probability output.
-                # However, probability output format varies by classifier type.
-                # For now, we return the class map and note that probability maps
-                # may require classifier-specific handling.
-                classified_image = image.classify(classifier)
+            # Get input properties (bands) from classifier connection
+            input_properties = classifier_connection.input_properties
+            if input_properties:
+                # Select only the bands used during training
+                image = image.select(input_properties)
                 LOGGER.warning(
-                    "Classified image (class map mode). "
-                    "Note: Probability map output may require classifier-specific implementation."
+                    f"Using training bands for classification: {input_properties}"
                 )
+            else:
+                LOGGER.warning(
+                    "No input properties found in classifier connection, using all bands"
+                )
+
+            # Classify the image - get prediction (class IDs)
+            # GEE's classify() returns class IDs by default
+            classified_image = image.classify(classifier, outputName="classification")
 
             # Map prediction results back to original class values if reverse_mapping exists
             reverse_mapping = classifier_connection.reverse_mapping
@@ -1908,7 +1836,7 @@ class ImageClassPredictor:
 
             LOGGER.warning("Successfully classified image")
 
-            return knut.export_gee_connection(classified_image, image_connection)
+            return knut.export_gee_image_connection(classified_image, image_connection)
 
         except Exception as e:
             LOGGER.error(f"Image classification failed: {e}")
@@ -1924,24 +1852,24 @@ class ImageClassPredictor:
     name="Feature Collection Predictor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "predictFC.png",
+    icon_path=__NODE_ICON_PATH + "FCpredictor.png",
     id="featurecollectionpredictor",
     after="imageclasspredictor",
 )
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with features to classify (must contain the same band/property names used for training).",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.input_port(
     name="GEE Classifier Connection",
     description="GEE Classifier connection with trained classifier model (from Learner nodes).",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_classifier_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with prediction results added as a new property.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class FeatureCollectionPredictor:
     """Applies a trained classifier to classify features in a Feature Collection.
@@ -2011,7 +1939,7 @@ class FeatureCollectionPredictor:
 
         try:
             # Get Feature Collection and classifier from connections
-            feature_collection = fc_connection.gee_object
+            feature_collection = fc_connection.feature_collection
             classifier = classifier_connection.classifier
 
             if not isinstance(feature_collection, ee.FeatureCollection):
@@ -2074,7 +2002,9 @@ class FeatureCollectionPredictor:
             except Exception:
                 LOGGER.warning("Classified Feature Collection (size check skipped)")
 
-            return knut.export_gee_connection(classified_fc, fc_connection)
+            return knut.export_gee_feature_collection_connection(
+                classified_fc, fc_connection
+            )
 
         except Exception as e:
             LOGGER.error(f"Feature Collection classification failed: {e}")
@@ -2095,19 +2025,9 @@ class FeatureCollectionPredictor:
     after="featurecollectionpredictor",
 )
 @knext.input_port(
-    name="Training Data",
-    description="Training data: FeatureCollection (from Sample Regions for Classification or Generate Training Points) with pixel values and class labels.",
-    port_type=google_earth_engine_port_type,
-)
-@knext.input_port(
     name="GEE Classifier Connection",
     description="GEE Classifier connection with trained classifier model (from Learner nodes).",
-    port_type=google_earth_engine_port_type,
-)
-@knext.output_port(
-    name="GEE Classifier Connection",
-    description="GEE Classifier connection (passed through unchanged).",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_classifier_port_type,
 )
 @knext.output_table(
     name="Training Accuracy Metrics",
@@ -2156,13 +2076,12 @@ class ClassifierScorer:
         default_value="landcover",
     )
 
-    def configure(self, configure_context, input_schema1, input_schema2):
+    def configure(self, configure_context, input_schema):
         return None
 
     def execute(
         self,
         exec_context: knext.ExecutionContext,
-        training_data_connection,
         classifier_connection,
     ):
         import ee
@@ -2171,14 +2090,11 @@ class ClassifierScorer:
         LOGGER = logging.getLogger(__name__)
 
         try:
-            # Get training FeatureCollection and classifier
-            training_fc = training_data_connection.gee_object
+            # Get all information from classifier connection
             classifier = classifier_connection.classifier
-
-            if not isinstance(training_fc, ee.FeatureCollection):
-                raise ValueError(
-                    "Input must be a FeatureCollection from 'Sample Regions for Classification' or 'Generate Training Points from Reference Image'"
-                )
+            training_fc = classifier_connection.training_data
+            label_property = classifier_connection.label_property or self.label_property
+            reverse_mapping = classifier_connection.reverse_mapping
 
             if classifier is None:
                 raise ValueError(
@@ -2186,34 +2102,32 @@ class ClassifierScorer:
                     "Please use a trained classifier from Learner nodes (Random Forest Learner, CART Learner, SVM Learner, or Naive Bayes Learner)."
                 )
 
-            # Get reverse mapping from classifier connection
-            reverse_mapping = classifier_connection.reverse_mapping
+            if training_fc is None:
+                raise ValueError(
+                    "Classifier connection does not contain training data. "
+                    "This node requires a classifier trained by Learner nodes (Random Forest Learner, CART Learner, SVM Learner, or Naive Bayes Learner)."
+                )
 
-            # Check if training data needs remapping (same as in Learner nodes)
-            # We need to use the same remapped data that was used for training
-            try:
-                remapped_fc, class_mapping, _ = remap_class_values_to_continuous(
-                    training_fc, self.label_property
+            if not isinstance(training_fc, ee.FeatureCollection):
+                raise ValueError(
+                    "Training data must be a FeatureCollection. "
+                    "This node requires a classifier trained by Learner nodes."
                 )
-                if class_mapping is not None:
-                    LOGGER.warning(
-                        f"Using remapped training data for accuracy calculation (same as training)"
-                    )
-                    training_fc_for_scoring = remapped_fc
-                else:
-                    training_fc_for_scoring = training_fc
-            except Exception as e:
-                LOGGER.warning(
-                    f"Could not remap training data (may already be continuous): {e}. Using original data."
-                )
-                training_fc_for_scoring = training_fc
+
+            # Use the training data that was already remapped during training
+            # This ensures we use the exact same data structure that was used for training
+            training_fc_for_scoring = training_fc  # Already remapped in Learner nodes
+
+            LOGGER.warning(
+                f"Computing accuracy metrics using training data from classifier connection (label property: {label_property})"
+            )
 
             # Compute training accuracy metrics
             try:
                 metrics_df = compute_classification_metrics(
                     training_fc_for_scoring,
                     classifier,
-                    self.label_property,
+                    label_property,
                     reverse_mapping,
                 )
                 LOGGER.warning("Successfully computed training accuracy metrics")
@@ -2231,8 +2145,8 @@ class ClassifierScorer:
                     ]
                 )
 
-            # Pass through classifier connection unchanged
-            return classifier_connection, knext.Table.from_pandas(metrics_df)
+            # Return only the accuracy metrics table
+            return knext.Table.from_pandas(metrics_df)
 
         except Exception as e:
             LOGGER.error(f"Classifier scoring failed: {e}")

@@ -378,6 +378,121 @@ def export_gee_connection(gee_object, existing_connection):
     return create_gee_connection_object(gee_object, credentials, project_id)
 
 
+def export_gee_image_connection(image, existing_connection):
+    """
+    Export a GEE Image as a specialized Image connection object.
+
+    Args:
+        image: The GEE Image object
+        existing_connection: Existing connection object to get credentials and project_id from
+
+    Returns:
+        GEEImageConnectionObject: Specialized Image connection object
+    """
+    from util.common import (
+        GEEImageConnectionObject,
+        GEEImageObjectSpec,
+    )
+
+    credentials = existing_connection.credentials
+    project_id = existing_connection.spec.project_id
+    spec = GEEImageObjectSpec(project_id)
+
+    return GEEImageConnectionObject(spec=spec, credentials=credentials, image=image)
+
+
+def export_gee_feature_collection_connection(feature_collection, existing_connection):
+    """
+    Export a GEE FeatureCollection as a specialized FeatureCollection connection object.
+
+    Args:
+        feature_collection: The GEE FeatureCollection object
+        existing_connection: Existing connection object to get credentials and project_id from
+
+    Returns:
+        GEEFeatureCollectionConnectionObject: Specialized FeatureCollection connection object
+    """
+    from util.common import (
+        GEEFeatureCollectionConnectionObject,
+        GEEFeatureCollectionObjectSpec,
+    )
+
+    credentials = existing_connection.credentials
+    project_id = existing_connection.spec.project_id
+    spec = GEEFeatureCollectionObjectSpec(project_id)
+
+    return GEEFeatureCollectionConnectionObject(
+        spec=spec, credentials=credentials, feature_collection=feature_collection
+    )
+
+
+def export_gee_classifier_connection(
+    classifier,
+    existing_connection,
+    training_data=None,
+    label_property=None,
+    reverse_mapping=None,
+    input_properties=None,
+):
+    """
+    Export a GEE Classifier as a specialized Classifier connection object.
+
+    Args:
+        classifier: The trained GEE Classifier object
+        existing_connection: Existing connection object to get credentials and project_id from
+        training_data: Training data FeatureCollection (already remapped)
+        label_property: Label property name used during training
+        reverse_mapping: Reverse mapping for class values
+        input_properties: Input properties (bands/features) used during training
+
+    Returns:
+        GEEClassifierConnectionObject: Specialized Classifier connection object
+    """
+    from util.common import (
+        GEEClassifierConnectionObject,
+        GEEClassifierObjectSpec,
+    )
+
+    credentials = existing_connection.credentials
+    project_id = existing_connection.spec.project_id
+    spec = GEEClassifierObjectSpec(project_id)
+
+    return GEEClassifierConnectionObject(
+        spec=spec,
+        credentials=credentials,
+        classifier=classifier,
+        training_data=training_data,
+        label_property=label_property,
+        reverse_mapping=reverse_mapping,
+        input_properties=input_properties,
+    )
+
+
+def export_gee_image_collection_connection(image_collection, existing_connection):
+    """
+    Export a GEE ImageCollection as a specialized ImageCollection connection object.
+
+    Args:
+        image_collection: The GEE ImageCollection object
+        existing_connection: Existing connection object to get credentials and project_id from
+
+    Returns:
+        GEEImageCollectionConnectionObject: Specialized ImageCollection connection object
+    """
+    from util.common import (
+        GEEImageCollectionConnectionObject,
+        GEEImageCollectionObjectSpec,
+    )
+
+    credentials = existing_connection.credentials
+    project_id = existing_connection.spec.project_id
+    spec = GEEImageCollectionObjectSpec(project_id)
+
+    return GEEImageCollectionConnectionObject(
+        spec=spec, credentials=credentials, image_collection=image_collection
+    )
+
+
 def batch_process_feature_collection_to_table(
     feature_collection,
     file_format="DataFrame",

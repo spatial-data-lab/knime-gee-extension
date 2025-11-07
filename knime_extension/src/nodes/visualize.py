@@ -3,6 +3,8 @@ import util.knime_utils as knut
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
+    gee_image_port_type,
+    gee_feature_collection_port_type,
 )
 
 
@@ -32,7 +34,7 @@ __NODE_ICON_PATH = "icons/icon/visualize/"
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_view(
     name="GEE Map View",
@@ -142,7 +144,7 @@ class ViewNodeGEEMap:
 
         # Get image directly from connection object
         # No need to initialize GEE - it's already initialized in the same Python process!
-        image = image_connection.gee_object
+        image = image_connection.image
 
         # Get band names efficiently without full image info
         band_names = image.bandNames().getInfo()
@@ -274,7 +276,7 @@ class ViewNodeGEEMap:
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_view(
     name="GEE Feature Collection View",
@@ -380,7 +382,7 @@ class ViewNodeGEEFeatureCollection:
 
         LOGGER = logging.getLogger(__name__)
 
-        feature_collection = fc_connection.gee_object
+        feature_collection = fc_connection.feature_collection
 
         color_list = []
         for color in self.color_palette.split(","):

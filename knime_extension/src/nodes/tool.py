@@ -8,6 +8,8 @@ import util.knime_utils as knut
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
+    gee_image_port_type,
+    gee_image_collection_port_type,
 )
 
 # Category for GEE Tool nodes
@@ -39,12 +41,12 @@ __NODE_ICON_PATH = "icons/icon/tool/"
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with resampled/reprojected image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ImageResampleReproject:
     """Resamples and reprojects a Google Earth Engine image to a specified projection and scale.
@@ -114,7 +116,7 @@ class ImageResampleReproject:
 
         try:
             # Get image from connection
-            image = image_connection.gee_object
+            image = image_connection.image
 
             # Reproject and resample the image
             reprojected_image = image.reproject(
@@ -127,7 +129,7 @@ class ImageResampleReproject:
                 f"Successfully reprojected image to {self.target_projection} at {self.target_scale}m scale using {self.resampling_method} resampling"
             )
 
-            return knut.export_gee_connection(reprojected_image, image_connection)
+            return knut.export_gee_image_connection(reprojected_image, image_connection)
 
         except Exception as e:
             LOGGER.error(f"Image reprojection failed: {e}")
@@ -149,12 +151,12 @@ class ImageResampleReproject:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with embedded image object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with calculated index/expression result.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class RasterCalculatorIndices:
     """Calculates vegetation indices, water indices, and custom expressions from image bands.
@@ -243,7 +245,7 @@ class RasterCalculatorIndices:
 
         try:
             # Get image from connection
-            image = image_connection.gee_object
+            image = image_connection.image
 
             if self.calculation_mode == "predefined":
                 # Calculate pre-defined index
@@ -268,10 +270,10 @@ class RasterCalculatorIndices:
                     final_image = result_image
             else:
                 LOGGER.error("Failed to calculate index/expression")
-                return knut.export_gee_connection(image, image_connection)
+                return knut.export_gee_image_connection(image, image_connection)
 
             LOGGER.warning(f"Successfully calculated {band_name} index/expression")
-            return knut.export_gee_connection(final_image, image_connection)
+            return knut.export_gee_image_connection(final_image, image_connection)
 
         except Exception as e:
             LOGGER.error(f"Index calculation failed: {e}")
@@ -365,12 +367,12 @@ class RasterCalculatorIndices:
 @knext.input_port(
     name="GEE Image Collection Connection",
     description="GEE Image Collection connection with embedded collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_collection_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with temporal composite result.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class TemporalCompositeReducer:
     """Creates temporal composites and rolling statistics from image collections.
@@ -465,7 +467,7 @@ class TemporalCompositeReducer:
 
         try:
             # Get image collection from connection
-            image_collection = ic_connection.gee_object
+            image_collection = ic_connection.image_collection
 
             # Create temporal composite based on method and grouping
             if self.grouping == "none":
@@ -490,7 +492,7 @@ class TemporalCompositeReducer:
                 f"Successfully created temporal composite using {self.composite_method} method with {self.grouping} grouping"
             )
 
-            return knut.export_gee_connection(result_image, ic_connection)
+            return knut.export_gee_image_connection(result_image, ic_connection)
 
         except Exception as e:
             LOGGER.error(f"Temporal composite creation failed: {e}")
@@ -579,7 +581,7 @@ class TemporalCompositeReducer:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with multi-band image for feature extraction.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.input_port(
     name="GEE Feature Collection Connection",
@@ -683,7 +685,7 @@ class SampleRegionsForML:
 
         try:
             # Get image and feature collection from connections
-            image = image_connection.gee_object
+            image = image_connection.image
             training_fc = fc_connection.gee_object
 
             # Sample the image
@@ -942,7 +944,7 @@ class TrainClassifier:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with image to classify.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.input_port(
     name="GEE Classifier Connection",
@@ -952,7 +954,7 @@ class TrainClassifier:
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with classified image.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ClassifyImage:
     """Applies a trained classifier to classify an image.
@@ -1013,7 +1015,7 @@ class ClassifyImage:
 
         try:
             # Get image from connection
-            image = image_connection.gee_object
+            image = image_connection.image
 
             # Note: This is a simplified implementation
             # In practice, you would need to properly handle the trained classifier
@@ -1022,7 +1024,7 @@ class ClassifyImage:
 
             LOGGER.warning("Successfully classified image (simplified implementation)")
 
-            return knut.export_gee_connection(classified_image, image_connection)
+            return knut.export_gee_image_connection(classified_image, image_connection)
 
         except Exception as e:
             LOGGER.error(f"Image classification failed: {e}")
@@ -1044,12 +1046,12 @@ class ClassifyImage:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with multi-band image for clustering.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with cluster labels.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_table(
     name="Cluster Centers",
@@ -1120,7 +1122,7 @@ class KMeansClustering:
 
         try:
             # Get image from connection
-            image = image_connection.gee_object
+            image = image_connection.image
 
             # Perform K-means clustering
             clusterer = ee.Clusterer.wekaKMeans(
@@ -1152,7 +1154,7 @@ class KMeansClustering:
             )
 
             return (
-                knut.export_gee_connection(clustered_image, image_connection),
+                knut.export_gee_image_connection(clustered_image, image_connection),
                 knext.Table.from_pandas(df),
             )
 
@@ -1176,12 +1178,12 @@ class KMeansClustering:
 @knext.input_port(
     name="GEE Image Connection",
     description="GEE Image connection with image for focal operations.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with filtered image.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class FocalOperations:
     """Performs focal (neighborhood) operations on images.
@@ -1252,7 +1254,7 @@ class FocalOperations:
 
         try:
             # Get image from connection
-            image = image_connection.gee_object
+            image = image_connection.image
 
             # Create kernel based on type and size
             if self.kernel_type == "square":
@@ -1284,7 +1286,7 @@ class FocalOperations:
                 f"Successfully applied {self.focal_method} focal operation with {self.kernel_type} kernel of size {self.kernel_size}"
             )
 
-            return knut.export_gee_connection(filtered_image, image_connection)
+            return knut.export_gee_image_connection(filtered_image, image_connection)
 
         except Exception as e:
             LOGGER.error(f"Focal operation failed: {e}")

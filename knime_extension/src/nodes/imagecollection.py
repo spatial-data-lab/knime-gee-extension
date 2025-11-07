@@ -8,6 +8,9 @@ import util.knime_utils as knut
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
+    gee_image_port_type,
+    gee_image_collection_port_type,
+    gee_feature_collection_port_type,
 )
 
 # Category for GEE Image I/O nodes
@@ -160,7 +163,7 @@ class GEEDatasetSearch:
 @knext.output_port(
     name="GEE Image Collection Connection",
     description="GEE Image Collection connection with embedded collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_collection_port_type,
 )
 class ImageCollectionReader:
     """Loads an image collection from Google Earth Engine.
@@ -209,7 +212,9 @@ class ImageCollectionReader:
 
         LOGGER.warning(f"Loaded image collection: {self.collection_id}")
 
-        return knut.export_gee_connection(image_collection, gee_connection)
+        return knut.export_gee_image_collection_connection(
+            image_collection, gee_connection
+        )
 
 
 ############################################
@@ -228,12 +233,12 @@ class ImageCollectionReader:
 @knext.input_port(
     name="GEE Image Collection Connection",
     description="GEE Image Collection connection.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_collection_port_type,
 )
 @knext.output_port(
     name="GEE Image Collection Connection",
     description="Filtered GEE Image Collection connection.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_collection_port_type,
 )
 class ImageCollectionGeneralFilter:
     """Filters an Image Collection by date and cloud cover.
@@ -367,7 +372,7 @@ class ImageCollectionGeneralFilter:
         from datetime import datetime, timedelta, date
 
         LOGGER = logging.getLogger(__name__)
-        image_collection = ic_connection.gee_object
+        image_collection = ic_connection.image_collection
 
         # Determine cloud property (user explicitly selects the type)
         cloud_property = None
@@ -480,7 +485,9 @@ class ImageCollectionGeneralFilter:
         # is an expensive operation that can be very slow for large collections.
         # The collection will be evaluated lazily when actually used downstream.
 
-        return knut.export_gee_connection(image_collection, ic_connection)
+        return knut.export_gee_image_collection_connection(
+            image_collection, ic_connection
+        )
 
 
 ############################################
@@ -579,14 +586,14 @@ class ImageCollectionGeneralFilter:
 #         import logging
 
 #         LOGGER = logging.getLogger(__name__)
-#         image_collection = ic_connection.gee_object
+#         image_collection = ic_connection.image_collection
 
 #         # Only apply filter if all parameters are provided
 #         if not self.property_name or not self.property_value:
 #             LOGGER.warning(
 #                 "Property name or value is empty, returning original collection"
 #             )
-#             return knut.export_gee_connection(image_collection, ic_connection)
+#             return knut.export_gee_image_collection_connection(image_collection, ic_connection)
 
 #         prop_name = self.property_name.strip()
 #         val_str = self.property_value.strip()
@@ -657,7 +664,7 @@ class ImageCollectionGeneralFilter:
 #         except Exception as e:
 #             LOGGER.warning(f"Could not check result size: {e}")
 
-#         return knut.export_gee_connection(image_collection, ic_connection)
+#         return knut.export_gee_image_collection_connection(image_collection, ic_connection)
 
 
 ############################################
@@ -676,17 +683,17 @@ class ImageCollectionGeneralFilter:
 @knext.input_port(
     name="GEE Image Collection Connection",
     description="GEE Image Collection connection.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_collection_port_type,
 )
 @knext.input_port(
     name="ROI Feature Collection Connection",
     description="Feature Collection defining the region of interest.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Image Collection Connection",
     description="Spatially filtered GEE Image Collection connection.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_collection_port_type,
 )
 class ImageCollectionSpatialFilter:
     """Filters and clips an Image Collection using a region of interest (ROI).
@@ -740,8 +747,8 @@ class ImageCollectionSpatialFilter:
         import logging
 
         LOGGER = logging.getLogger(__name__)
-        image_collection = ic_connection.gee_object
-        roi_geometry = roi_connection.gee_object.geometry()
+        image_collection = ic_connection.image_collection
+        roi_geometry = roi_connection.feature_collection.geometry()
 
         # Apply spatial filter
         if self.filter_bounds:
@@ -770,7 +777,9 @@ class ImageCollectionSpatialFilter:
         except Exception as e:
             LOGGER.warning(f"Could not check result size: {e}")
 
-        return knut.export_gee_connection(image_collection, ic_connection)
+        return knut.export_gee_image_collection_connection(
+            image_collection, ic_connection
+        )
 
 
 ############################################
@@ -789,12 +798,12 @@ class ImageCollectionSpatialFilter:
 @knext.input_port(
     name="GEE Image Collection Connection",
     description="GEE Image Collection connection.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_collection_port_type,
 )
 @knext.output_port(
     name="GEE Image Connection",
     description="GEE Image connection with aggregated image.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_image_port_type,
 )
 class ImageCollectionAggregator:
     """Aggregates an Image Collection into a single composite image.
@@ -846,7 +855,7 @@ class ImageCollectionAggregator:
         import logging
 
         LOGGER = logging.getLogger(__name__)
-        image_collection = ic_connection.gee_object
+        image_collection = ic_connection.image_collection
 
         # Define aggregation methods
         aggregation_methods = {
@@ -873,4 +882,4 @@ class ImageCollectionAggregator:
             )
             image = image_collection.first()
 
-        return knut.export_gee_connection(image, ic_connection)
+        return knut.export_gee_image_connection(image, ic_connection)

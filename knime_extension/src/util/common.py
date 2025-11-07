@@ -147,3 +147,240 @@ google_earth_engine_port_type = knext.port_type(
     GoogleEarthEngineConnectionObject,
     GoogleEarthEngineObjectSpec,
 )
+
+
+############################################
+# Specialized Connection Objects
+############################################
+
+
+# Base class for all GEE connection objects
+class BaseGEEConnectionObject(ConnectionPortObject):
+    """Base class for all GEE connection objects with shared credentials and project_id."""
+
+    def __init__(self, spec: GoogleEarthEngineObjectSpec, credentials=None):
+        super().__init__(spec)
+        self._credentials = credentials
+
+    @property
+    def spec(self) -> GoogleEarthEngineObjectSpec:
+        return super().spec
+
+    @property
+    def credentials(self):
+        return self._credentials
+
+
+# Image Connection Object
+class GEEImageConnectionObject(BaseGEEConnectionObject):
+    """Connection object specifically for GEE Image objects."""
+
+    def __init__(self, spec: GoogleEarthEngineObjectSpec, credentials=None, image=None):
+        super().__init__(spec, credentials)
+        self._image = image
+
+    @property
+    def image(self):
+        """Get the GEE Image object"""
+        return self._image
+
+    def to_connection_data(self):
+        return {
+            "credentials": self._credentials,
+            "image": self._image,
+        }
+
+    @classmethod
+    def from_connection_data(cls, spec: knext.PortObjectSpec, data):
+        credentials = data.get("credentials") if data else None
+        image = data.get("image") if data else None
+        return cls(spec, credentials, image)
+
+
+# Feature Collection Connection Object
+class GEEFeatureCollectionConnectionObject(BaseGEEConnectionObject):
+    """Connection object specifically for GEE FeatureCollection objects."""
+
+    def __init__(
+        self,
+        spec: GoogleEarthEngineObjectSpec,
+        credentials=None,
+        feature_collection=None,
+    ):
+        super().__init__(spec, credentials)
+        self._feature_collection = feature_collection
+
+    @property
+    def feature_collection(self):
+        """Get the GEE FeatureCollection object"""
+        return self._feature_collection
+
+    def to_connection_data(self):
+        return {
+            "credentials": self._credentials,
+            "feature_collection": self._feature_collection,
+        }
+
+    @classmethod
+    def from_connection_data(cls, spec: knext.PortObjectSpec, data):
+        credentials = data.get("credentials") if data else None
+        feature_collection = data.get("feature_collection") if data else None
+        return cls(spec, credentials, feature_collection)
+
+
+# Classifier Connection Object
+class GEEClassifierConnectionObject(BaseGEEConnectionObject):
+    """Connection object specifically for GEE Classifier objects with training metadata."""
+
+    def __init__(
+        self,
+        spec: GoogleEarthEngineObjectSpec,
+        credentials=None,
+        classifier=None,
+        training_data=None,  # Training data (already remapped)
+        label_property=None,  # Label property name
+        reverse_mapping=None,  # Reverse mapping for class values
+        input_properties=None,  # Input properties (bands) used during training
+    ):
+        super().__init__(spec, credentials)
+        self._classifier = classifier
+        self._training_data = training_data
+        self._label_property = label_property
+        self._reverse_mapping = reverse_mapping
+        self._input_properties = input_properties
+
+    @property
+    def classifier(self):
+        """Get the trained GEE Classifier object"""
+        return self._classifier
+
+    @property
+    def training_data(self):
+        """Get the training data FeatureCollection (already remapped)"""
+        return self._training_data
+
+    @property
+    def label_property(self):
+        """Get the label property name used during training"""
+        return self._label_property
+
+    @property
+    def reverse_mapping(self):
+        """Get reverse mapping for class values (maps 0-based indices back to original class values)"""
+        return self._reverse_mapping
+
+    @property
+    def input_properties(self):
+        """Get the input properties (bands/features) used during training"""
+        return self._input_properties
+
+    def to_connection_data(self):
+        return {
+            "credentials": self._credentials,
+            "classifier": self._classifier,
+            "training_data": self._training_data,
+            "label_property": self._label_property,
+            "reverse_mapping": self._reverse_mapping,
+            "input_properties": self._input_properties,
+        }
+
+    @classmethod
+    def from_connection_data(cls, spec: knext.PortObjectSpec, data):
+        credentials = data.get("credentials") if data else None
+        classifier = data.get("classifier") if data else None
+        training_data = data.get("training_data") if data else None
+        label_property = data.get("label_property") if data else None
+        reverse_mapping = data.get("reverse_mapping") if data else None
+        input_properties = data.get("input_properties") if data else None
+        return cls(
+            spec,
+            credentials,
+            classifier,
+            training_data,
+            label_property,
+            reverse_mapping,
+            input_properties,
+        )
+
+
+# Specialized Spec classes for different port types
+# Each port type needs a unique Spec class, even if they contain the same data
+class GEEImageObjectSpec(GoogleEarthEngineObjectSpec):
+    """Spec class for GEE Image port type."""
+
+    pass
+
+
+class GEEFeatureCollectionObjectSpec(GoogleEarthEngineObjectSpec):
+    """Spec class for GEE FeatureCollection port type."""
+
+    pass
+
+
+class GEEClassifierObjectSpec(GoogleEarthEngineObjectSpec):
+    """Spec class for GEE Classifier port type."""
+
+    pass
+
+
+class GEEImageCollectionObjectSpec(GoogleEarthEngineObjectSpec):
+    """Spec class for GEE ImageCollection port type."""
+
+    pass
+
+
+# Image Collection Connection Object
+class GEEImageCollectionConnectionObject(BaseGEEConnectionObject):
+    """Connection object specifically for GEE ImageCollection objects."""
+
+    def __init__(
+        self,
+        spec: GoogleEarthEngineObjectSpec,
+        credentials=None,
+        image_collection=None,
+    ):
+        super().__init__(spec, credentials)
+        self._image_collection = image_collection
+
+    @property
+    def image_collection(self):
+        """Get the GEE ImageCollection object"""
+        return self._image_collection
+
+    def to_connection_data(self):
+        return {
+            "credentials": self._credentials,
+            "image_collection": self._image_collection,
+        }
+
+    @classmethod
+    def from_connection_data(cls, spec: knext.PortObjectSpec, data):
+        credentials = data.get("credentials") if data else None
+        image_collection = data.get("image_collection") if data else None
+        return cls(spec, credentials, image_collection)
+
+
+# Port types for specialized connection objects
+gee_image_port_type = knext.port_type(
+    "GEE Image Port Type",
+    GEEImageConnectionObject,
+    GEEImageObjectSpec,
+)
+
+gee_feature_collection_port_type = knext.port_type(
+    "GEE Feature Collection Port Type",
+    GEEFeatureCollectionConnectionObject,
+    GEEFeatureCollectionObjectSpec,
+)
+
+gee_classifier_port_type = knext.port_type(
+    "GEE Classifier Port Type",
+    GEEClassifierConnectionObject,
+    GEEClassifierObjectSpec,
+)
+
+gee_image_collection_port_type = knext.port_type(
+    "GEE Image Collection Port Type",
+    GEEImageCollectionConnectionObject,
+    GEEImageCollectionObjectSpec,
+)

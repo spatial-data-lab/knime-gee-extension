@@ -8,6 +8,7 @@ import util.knime_utils as knut
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
+    gee_feature_collection_port_type,
 )
 
 # Category for GEE Feature Collection I/O nodes
@@ -45,7 +46,7 @@ __NODE_ICON_PATH = "icons/icon/feature/"
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class GEEFeatureCollectionReader:
     """Loads a feature collection from Google Earth Engine using the specified collection ID.
@@ -93,7 +94,9 @@ class GEEFeatureCollectionReader:
 
         try:
             LOGGER.warning(f"Loaded feature collection: {self.collection_id}")
-            return knut.export_gee_connection(feature_collection, gee_connection)
+            return knut.export_gee_feature_collection_connection(
+                feature_collection, gee_connection
+            )
 
         except Exception as e:
             LOGGER.error(f"Failed to load feature collection: {e}")
@@ -116,12 +119,12 @@ class GEEFeatureCollectionReader:
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with filtered feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class GEEFeatureCollectionFilter:
     """Filters a Google Earth Engine Feature Collection based on property values with advanced comparison operators.
@@ -201,7 +204,7 @@ class GEEFeatureCollectionFilter:
         import logging
 
         LOGGER = logging.getLogger(__name__)
-        feature_collection = ee.FeatureCollection(fc_connection.gee_object)
+        feature_collection = ee.FeatureCollection(fc_connection.feature_collection)
 
         # Only proceed if both property name and value are set
         prop = (self.property_name or "").strip()
@@ -335,7 +338,9 @@ class GEEFeatureCollectionFilter:
         except Exception as e:
             LOGGER.warning(f"Could not check result size: {e}")
 
-        return knut.export_gee_connection(feature_collection, fc_connection)
+        return knut.export_gee_feature_collection_connection(
+            feature_collection, fc_connection
+        )
 
 
 ############################################
@@ -354,17 +359,17 @@ class GEEFeatureCollectionFilter:
 @knext.input_port(
     name="Input Feature Collection",
     description="The Feature Collection to be filtered or clipped.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.input_port(
     name="Filter Feature Collection",
     description="The Feature Collection used as the spatial filter or clipping boundary.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="The resulting spatially filtered or clipped Feature Collection.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class GEEFeatureCollectionSpatialFilter:
     """
@@ -445,8 +450,8 @@ class GEEFeatureCollectionSpatialFilter:
         import logging
 
         LOGGER = logging.getLogger(__name__)
-        feature_collection = fc_connection.gee_object
-        filter_geometry = filter_fc_connection.gee_object.geometry()
+        feature_collection = fc_connection.feature_collection
+        filter_geometry = filter_fc_connection.feature_collection.geometry()
 
         op_key = self.OPERATOR_CHOICES[self.spatial_operator]
 
@@ -505,7 +510,7 @@ class GEEFeatureCollectionSpatialFilter:
         except Exception as e:
             LOGGER.warning(f"Could not check result size: {e}")
 
-        return knut.export_gee_connection(result_fc, fc_connection)
+        return knut.export_gee_feature_collection_connection(result_fc, fc_connection)
 
 
 ############################################
@@ -524,7 +529,7 @@ class GEEFeatureCollectionSpatialFilter:
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_table(
     name="Feature Collection Info Table",
@@ -565,7 +570,7 @@ class GEEFeatureCollectionInfo:
         import pandas as pd
 
         LOGGER = logging.getLogger(__name__)
-        feature_collection = fc_connection.gee_object
+        feature_collection = fc_connection.feature_collection
 
         try:
             # --- Optimized Server-Side Analysis ---
@@ -657,7 +662,7 @@ class GEEFeatureCollectionInfo:
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 @knext.output_table(
     name="Output Table",
@@ -722,7 +727,7 @@ class FeatureCollectionToTable:
         LOGGER = logging.getLogger(__name__)
 
         # Get feature collection directly from connection object
-        feature_collection = fc_connection.gee_object
+        feature_collection = fc_connection.feature_collection
 
         try:
             LOGGER.warning(
@@ -787,7 +792,7 @@ class FeatureCollectionToTable:
 @knext.output_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class GeoTableToFeatureCollection:
     """Converts a local GeoTable to a Google Earth Engine FeatureCollection.
@@ -890,7 +895,9 @@ class GeoTableToFeatureCollection:
             LOGGER.warning(
                 f"Successfully converted {len(shp)} features to Feature Collection"
             )
-            return knut.export_gee_connection(feature_collection, gee_connection)
+            return knut.export_gee_feature_collection_connection(
+                feature_collection, gee_connection
+            )
 
         except Exception as e:
             # If direct conversion fails (likely due to size), try batch processing
@@ -937,7 +944,7 @@ class GeoTableToFeatureCollection:
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class FeatureCollectionToDrive:
     """Exports a Google Earth Engine FeatureCollection to Google Drive.
@@ -1043,7 +1050,7 @@ class FeatureCollectionToDrive:
         LOGGER = logging.getLogger(__name__)
 
         # Get feature collection directly from connection object
-        feature_collection = fc_connection.gee_object
+        feature_collection = fc_connection.feature_collection
 
         try:
             # Generate description with timestamp
@@ -1150,7 +1157,7 @@ class FeatureCollectionToDrive:
 @knext.input_port(
     name="GEE Feature Collection Connection",
     description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=google_earth_engine_port_type,
+    port_type=gee_feature_collection_port_type,
 )
 class FeatureCollectionToCloudStorage:
     """Exports a Google Earth Engine FeatureCollection to Google Cloud Storage.
@@ -1288,7 +1295,7 @@ class FeatureCollectionToCloudStorage:
         LOGGER = logging.getLogger(__name__)
 
         # Get feature collection directly from connection object
-        feature_collection = fc_connection.gee_object
+        feature_collection = fc_connection.feature_collection
 
         try:
             # Validate bucket name
