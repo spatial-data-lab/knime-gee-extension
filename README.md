@@ -1,4 +1,4 @@
-# Earth Engine Extension
+# KNIME Earth Engine Extension
 
 KNIME Earth Engine Extension
 
