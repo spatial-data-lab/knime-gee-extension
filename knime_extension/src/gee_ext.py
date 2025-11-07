@@ -17,16 +17,13 @@ import nodes.authorization
 import nodes.image
 import nodes.imagecollection
 import nodes.featureio
-
-# import nodes.tool
 import nodes.visualize
 import nodes.sampling
-
-# import nodes.classifier
 import nodes.supervise
 
+# import nodes.tool
 # import nodes.cluster
-
+# import nodes.classifier
 # import nodes.io
 # import nodes.manipulator
 # import nodes.dataset
