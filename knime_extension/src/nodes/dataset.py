@@ -59,6 +59,7 @@ class GEEHarmonizedSentinel2MSIData:
     # Function to mask clouds using the Sentinel-2 QA band
     def mask_s2_clouds(self, image):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         qa = image.select("QA60")
@@ -76,6 +77,7 @@ class GEEHarmonizedSentinel2MSIData:
 
     def execute(self, exec_context: knext.ExecutionContext):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle

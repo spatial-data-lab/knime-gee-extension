@@ -1,11 +1,11 @@
-name: gee_extension2
+name: google_earth_engine_env
 channels:
   - knime
   - conda-forge
 dependencies:
   - packaging
-  - python=3.9
+  - python=3
   - knime-extension
   - knime-python-base
-  - geemap=0.32.1
-  - geopandas=0.14.4
+  - geemap=0.35.3
+  - geopandas=1.1.1

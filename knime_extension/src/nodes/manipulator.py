@@ -44,9 +44,11 @@ class CalculateMean:
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
+
         image_collection = pickle.loads(input_binary)
         mean = image_collection.mean()
 
@@ -91,6 +93,7 @@ class ClipImage:
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
@@ -139,8 +142,9 @@ class FilterBounds:
     def execute(
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
-        
+
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
@@ -204,6 +208,7 @@ class SampleRegions:
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
@@ -252,6 +257,7 @@ class ErrorMatrix:
 
     def execute(self, exec_context: knext.ExecutionContext, input_binary):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
