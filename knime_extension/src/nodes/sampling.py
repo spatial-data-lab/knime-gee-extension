@@ -871,6 +871,10 @@ class CountByClass:
     - Feature Collection should contain polygon features representing regions
     - Class codes should match the values in your classified image
 
+    **Earth Engine Limits:**
+
+    - GEE allows up to roughly 1e9 pixels per reduction call; use the advanced Max Pixels setting to stay within limits.
+
     **Output Format:**
 
     Each feature in the output Feature Collection will have additional properties:
@@ -907,6 +911,14 @@ class CountByClass:
         is_advanced=True,
     )
 
+    max_pixels = knext.IntParameter(
+        "Max Pixels",
+        "Maximum number of pixels Earth Engine is allowed to read during the class count (integer ≤ 2,147,483,647).",
+        default_value=1000000000,
+        min_value=1,
+        is_advanced=True,
+    )
+
     def configure(self, configure_context, input_schema1, input_schema2):
         return None
 
@@ -926,6 +938,12 @@ class CountByClass:
             image = image_connection.image
             feature_collection = fc_connection.feature_collection
 
+            band_names = image.bandNames().getInfo()
+            if not band_names:
+                raise ValueError("Image has no bands")
+            band_name = band_names[0]
+            image_band = image.select(band_name)
+
             # Get category codes
             if self.auto_detect_classes:
                 # Auto-detect all unique class codes from the image
@@ -933,14 +951,6 @@ class CountByClass:
 
                 # Get the ROI (union of all features)
                 roi = feature_collection.geometry()
-
-                # Get the first band (assuming single-band classified image)
-                band_names = image.bandNames().getInfo()
-                if not band_names:
-                    raise ValueError("Image has no bands")
-
-                band_name = band_names[0]
-                image_band = image.select(band_name)
 
                 # Method 1: Use sampling to get unique values
                 # This is more reliable than histogram for classified images
@@ -1031,43 +1041,22 @@ class CountByClass:
 
             # Process each category code sequentially
             for category_code in category_codes:
-                # Create binary mask for this class
-                specific_category = image.eq(category_code)
-
-                # Count pixels of this class in each feature
-                counts_per_grid = specific_category.reduceRegions(
-                    collection=feature_collection,
-                    reducer=ee.Reducer.sum(),
-                    scale=self.scale,
-                    tileScale=self.tile_scale,
-                )
-
-                # Join counts with result_fc by matching system:index
-                # Create a lookup dictionary for faster access
-                # Use aggregate_histogram to create a lookup
-                count_lookup = counts_per_grid.aggregate_histogram("system:index")
+                # Create binary mask for this class (single band renamed to 'match')
+                specific_category = image_band.eq(category_code).rename("match")
 
                 def add_class_count(feature):
                     """Add class count property to feature"""
-                    # Get the feature's system:index
-                    feature_index = feature.get("system:index")
+                    count = specific_category.reduceRegion(
+                        reducer=ee.Reducer.sum(),
+                        geometry=feature.geometry(),
+                        scale=self.scale,
+                        tileScale=self.tile_scale,
+                        maxPixels=self.max_pixels,
+                    ).get("match")
 
-                    # Find matching feature in counts_per_grid by system:index
-                    matching_feature = counts_per_grid.filter(
-                        ee.Filter.eq("system:index", feature_index)
-                    ).first()
-
-                    # Get the count value (default to 0 if not found)
-                    class_count = ee.Algorithms.If(
-                        matching_feature,
-                        matching_feature.get("sum"),
-                        ee.Number(0),
-                    )
-
-                    # Add class count property
+                    class_count = ee.Number(ee.Algorithms.If(count, count, 0)).round()
                     return feature.set("class_" + str(category_code), class_count)
 
-                # Add class count to all features
                 result_fc = result_fc.map(add_class_count)
 
             LOGGER.warning(

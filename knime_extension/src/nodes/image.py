@@ -355,11 +355,6 @@ class ImageClip:
 ############################################
 
 
-def validate_output_path(path: str) -> None:
-    """Validator for output file path - accepts all paths."""
-    pass
-
-
 @knext.node(
     name="EE Image Exporter",
     node_type=knext.NodeType.SINK,
@@ -374,43 +369,68 @@ def validate_output_path(path: str) -> None:
     port_type=gee_image_port_type,
 )
 class ImageExporter:
-    """Exports a Google Earth Engine image to local storage.
+    """Exports a Google Earth Engine image to Google Drive or Cloud Storage.
 
-    This node exports a GEE image to your local file system in various formats.
-    It handles the export process efficiently and provides options for controlling
-    the export resolution and file format.
+    This node submits an Earth Engine export task that writes the image either
+    to a Google Cloud Storage bucket or to Google Drive. You can optionally wait
+    for the export task to finish and monitor progress through the node logs.
 
-    **Export Options:**
+    **Destinations:**
 
-    - **Output Path**: Specify the local file path for the exported image
-    - **Scale**: Control the export resolution (meters per pixel)
-    - **Format**: Automatically determined by file extension
+    - **Google Cloud Bucket**: Provide a bucket/object path such as
+      ``my-bucket/folder/my_image.tif``.
+    - **Google Drive**: Provide a folder and file name such as ``EEexport/my_image.tiff``.
 
-    **Supported Formats:**
+    **Authentication Notes:**
 
-    - **GeoTIFF**: .tif, .tiff (recommended for most use cases)
-    - **JPEG**: .jpg, .jpeg (for visualization)
-    - **PNG**: .png (for visualization)
+    - When using a **service account**, choose Google Cloud Bucket. Service accounts
+      usually do not have Google Drive scopes or permissions.
+    - When using **interactive authentication**, add the appropriate scopes in the
+      Google Authenticator node (Drive or Cloud Storage) before selecting the destination.
 
-    **Use Cases:**
+    **Options:**
 
-    - Export processed images for further analysis in other software
-    - Create high-resolution maps for presentations
-    - Generate base maps for GIS applications
-    - Export classification results or derived products
+    - **Scale**: Controls the export resolution in meters per pixel.
+    - **Wait for Download Completion**: When enabled, the node polls the export
+      task until it succeeds or fails.
 
-    **Performance Notes:**
-
-    - Larger scale values (lower resolution) export faster
-    - Very high resolution exports may take considerable time
-    - Consider using appropriate scale for your analysis needs
+    All exports use the GeoTIFF format with one file containing all bands.
     """
 
-    output_path = knext.LocalPathParameter(
-        "Output Path",
-        "Local file path for the exported image (include file extension, e.g., 'output.tif')",
-        placeholder_text="Select output file path...",
-        validator=validate_output_path,
+    class DestinationModeOptions(knext.EnumParameterOptions):
+        CLOUD = (
+            "Google Cloud Bucket",
+            "Export image to a Google Cloud Storage bucket.",
+        )
+        DRIVE = ("Google Drive", "Export image to a Google Drive folder.")
+
+        @classmethod
+        def get_default(cls):
+            return cls.CLOUD
+
+    destination = knext.EnumParameter(
+        label="Destination Mode",
+        description="Choose between exporting to Google Drive or Google Cloud Storage.",
+        default_value=DestinationModeOptions.get_default().name,
+        enum=DestinationModeOptions,
+    )
+
+    drive_path = knext.StringParameter(
+        "Drive Path",
+        "Drive folder and file name, e.g., 'EEexport/my_image.tiff'.",
+        default_value="EEexport/export.tiff",
+    ).rule(
+        knext.OneOf(destination, [DestinationModeOptions.DRIVE.name]),
+        knext.Effect.SHOW,
+    )
+
+    cloud_object_path = knext.StringParameter(
+        "Cloud Storage Object",
+        "Bucket and object path, e.g., 'my-bucket/folder/my_image.tif'.",
+        default_value="bucket/export.tif",
+    ).rule(
+        knext.OneOf(destination, [DestinationModeOptions.CLOUD.name]),
+        knext.Effect.SHOW,
     )
 
     scale = knext.IntParameter(
@@ -423,8 +443,27 @@ class ImageExporter:
 
     wait_for_completion = knext.BoolParameter(
         "Wait for Download Completion",
-        "If enabled, the node will wait until the file is fully downloaded before completing.",
+        "If enabled, the node will wait until the export finishes before completing.",
         default_value=True,
+    )
+
+    max_pixels = knext.IntParameter(
+        "Max Pixels",
+        "Maximum number of pixels Earth Engine is allowed to read during export (integer ≤ 2,147,483,647).",
+        default_value=1000000000,
+        min_value=1,
+        is_advanced=True,
+    )
+
+    max_wait_seconds = knext.IntParameter(
+        "Max Wait Seconds",
+        "Maximum number of seconds to wait for completion when waiting is enabled.",
+        default_value=600,
+        min_value=1,
+        is_advanced=True,
+    ).rule(
+        knext.OneOf(wait_for_completion, [True]),
+        knext.Effect.SHOW,
     )
 
     def configure(self, configure_context, input_schema):
@@ -432,76 +471,209 @@ class ImageExporter:
 
     def execute(self, exec_context: knext.ExecutionContext, image_connection):
         import ee
-        import geemap
         import logging
         import os
         import time
+        from datetime import datetime
 
         LOGGER = logging.getLogger(__name__)
 
-        # Get image from connection (GEE already initialized)
         image = image_connection.image
+        destination = self.destination or self.DestinationModeOptions.get_default().name
 
-        # Ensure output directory exists
-        output_dir = os.path.dirname(self.output_path)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            LOGGER.info(f"Created output directory: {output_dir}")
+        try:
+            destination_option = self.DestinationModeOptions[destination]
+        except KeyError as exc:
+            valid_options = ", ".join(opt.name for opt in self.DestinationModeOptions)
+            raise ValueError(
+                f"Unsupported destination '{self.destination}'. Expected one of [{valid_options}]."
+            ) from exc
 
-        LOGGER.info(f"Starting image export to: {self.output_path}")
-        LOGGER.info(f"Export scale: {self.scale} meters per pixel")
-
-        # Get image geometry for the export region
-        region = image.geometry()
-        fileurl = knut.ensure_file_extension(self.output_path, ".tiff")
-
-        # Export image using geemap with explicit parameters
-        geemap.ee_export_image(
-            image,
-            filename=fileurl,
-            scale=self.scale,
-            region=region,
-            file_per_band=False,  # Export all bands to single file
+        LOGGER.info(
+            "Starting image export: destination=%s, scale=%s",
+            destination_option.value[0],
+            self.scale,
         )
 
-        # Wait for download completion if enabled
-        if self.wait_for_completion:
-            LOGGER.info("Waiting for file download to complete...")
+        region = image.geometry()
+
+        try:
+            projection = image.projection().getInfo()
+            LOGGER.warning("Projection: %s", projection)
+        except Exception as projection_error:
+            LOGGER.warning("Failed to retrieve image projection: %s", projection_error)
+
+        def wait_for_task(task, label, success_message):
+            max_wait_seconds = self.max_wait_seconds
+            check_interval = 5
             start_time = time.time()
-            last_size = 0
-            stable_count = 0
-            check_interval = 1  # Check every 1 seconds
 
             while True:
-                elapsed_time = time.time() - start_time
+                status = task.status()
+                state = status.get("state")
 
-                # Check if file exists
-                if os.path.exists(fileurl):
-                    current_size = os.path.getsize(fileurl)
+                if state in ("COMPLETED", "FAILED", "CANCELLED"):
+                    if state == "COMPLETED":
+                        LOGGER.warning(success_message)
+                        return
 
-                    # Check if file size is stable (not growing)
-                    if current_size == last_size and current_size > 0:
-                        stable_count += 1
-                        # If size stable for 3 checks (6 seconds), consider complete
-                        if stable_count >= 3:
-                            LOGGER.warning(
-                                f"✓ Download completed! File: {fileurl} (Size: {current_size / 1024:.2f} KB, Time: {elapsed_time:.1f}s)"
-                            )
-                            break
-                    else:
-                        stable_count = 0
-                        LOGGER.info(
-                            f"Downloading... Current size: {current_size / 1024:.2f} KB (elapsed: {elapsed_time:.1f}s)"
-                        )
-
-                    last_size = current_size
-                else:
-                    LOGGER.info(
-                        f"Waiting for file to appear... (elapsed: {elapsed_time:.1f}s)"
+                    LOGGER.error(
+                        "%s export task %s ended with state %s: %s",
+                        label,
+                        task.id,
+                        state,
+                        status.get("error_message"),
+                    )
+                    raise RuntimeError(
+                        f"{label} export failed with state {state}: "
+                        f"{status.get('error_message')}"
                     )
 
-                # Wait before next check
+                elapsed_time = time.time() - start_time
+                if elapsed_time > max_wait_seconds:
+                    LOGGER.error(
+                        "Timed out waiting for %s export task %s (last state %s)",
+                        label,
+                        task.id,
+                        state,
+                    )
+                    raise TimeoutError(
+                        f"{label} export task {task.id} timed out before completion."
+                    )
+
+                LOGGER.warning(
+                    "Waiting for %s export task %s... state=%s (elapsed %.1fs)",
+                    label,
+                    task.id,
+                    state,
+                    elapsed_time,
+                )
                 time.sleep(check_interval)
+
+        if destination_option is self.DestinationModeOptions.CLOUD:
+            cloud_path = (self.cloud_object_path or "").strip()
+            if not cloud_path:
+                raise ValueError(
+                    "Cloud Storage Object must be provided when Destination is 'cloud'."
+                )
+
+            cloud_path = cloud_path.lstrip("/")
+            full_gs_path = f"gs://{cloud_path}"
+            full_gs_path = knut.ensure_file_extension(full_gs_path, ".tif")
+
+            bucket_and_object = full_gs_path[5:]
+            if "/" not in bucket_and_object:
+                raise ValueError(
+                    "Cloud Storage path must include both bucket and object "
+                    "(e.g., 'my-bucket/path/to/file.tif')."
+                )
+
+            bucket, object_path = bucket_and_object.split("/", 1)
+            object_path = object_path.strip("/")
+            if not object_path:
+                raise ValueError(
+                    "Cloud Storage path must include an object name after the bucket."
+                )
+
+            object_prefix, _ = os.path.splitext(object_path)
+
+            description = f"KNIME Image Cloud Export {datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+
+            try:
+                export_task = ee.batch.Export.image.toCloudStorage(
+                    image=image,
+                    description=description,
+                    bucket=bucket,
+                    fileNamePrefix=object_prefix,
+                    region=region,
+                    scale=self.scale,
+                    maxPixels=self.max_pixels,
+                    fileFormat="GeoTIFF",
+                )
+            except Exception as task_error:
+                LOGGER.error(
+                    "Failed to create Cloud Storage export task: %s", task_error
+                )
+                raise
+
+            export_task.start()
+            LOGGER.warning(
+                "Started Cloud Storage export task %s -> gs://%s/%s*.tif",
+                export_task.id,
+                bucket,
+                object_prefix,
+            )
+
+            if not self.wait_for_completion:
+                LOGGER.warning(
+                    "Cloud export submitted; not waiting for completion because "
+                    "'Wait for Download Completion' is disabled."
+                )
+                return
+
+            wait_for_task(
+                export_task,
+                "Cloud Storage",
+                f"GCS export task {export_task.id} completed. Output prefix gs://{bucket}/{object_prefix}",
+            )
+            return
+
+        drive_path = (self.drive_path or "").strip().lstrip("/")
+        if not drive_path:
+            raise ValueError("Drive Path must be provided when Destination is 'drive'.")
+
+        parts = [p for p in drive_path.split("/") if p]
+        if not parts:
+            raise ValueError("Drive Path must include a file name.")
+
+        filename = knut.ensure_file_extension(parts[-1], ".tiff")
+        file_prefix, _ = os.path.splitext(filename)
+        folder = "/".join(parts[:-1]) if len(parts) > 1 else None
+
+        description = (
+            f"KNIME Image Drive Export {datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        )
+
+        export_kwargs = dict(
+            image=image,
+            description=description,
+            fileNamePrefix=file_prefix,
+            region=region,
+            scale=self.scale,
+            maxPixels=self.max_pixels,
+            fileFormat="GeoTIFF",
+        )
+        if folder:
+            export_kwargs["folder"] = folder
+
+        try:
+            export_task = ee.batch.Export.image.toDrive(**export_kwargs)
+        except Exception as task_error:
+            LOGGER.error("Failed to create Drive export task: %s", task_error)
+            raise
+
+        export_task.start()
+        folder_label = folder or "root"
+        LOGGER.warning(
+            "Started Drive export task %s -> folder '%s', prefix '%s'",
+            export_task.id,
+            folder_label,
+            file_prefix,
+        )
+
+        if not self.wait_for_completion:
+            LOGGER.warning(
+                "Drive export submitted; not waiting for completion because "
+                "'Wait for Download Completion' is disabled."
+            )
+            return
+
+        wait_for_task(
+            export_task,
+            "Drive",
+            f"Drive export task {export_task.id} completed. Folder '{folder_label}', prefix '{file_prefix}'",
+        )
+        return
 
 
 ############################################
@@ -510,7 +682,7 @@ class ImageExporter:
 
 
 @knext.node(
-    name="Local GeoTiff To GEE",
+    name="Cloud GeoTiff To EE Image",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "GeotiffToGEE.png",
@@ -532,12 +704,12 @@ class ImageExporter:
     description="HTML view showing imported image information",
 )
 class GeoTiffToGEEImage:
-    """Converts a local GeoTIFF file to a Google Earth Engine image.
+    """Loads a GeoTIFF stored in Google Cloud Storage into Google Earth Engine.
 
-    This node uploads and converts a local GeoTIFF file to a GEE image object,
-    making it available for processing within GEE workflows. This is useful for
-    incorporating local data, custom analysis results, or external datasets into
-    GEE-based analysis.
+    This node reads a GeoTIFF that already resides in a Google Cloud Storage bucket,
+    creating an ``ee.Image`` that can be used in subsequent GEE nodes. The bucket
+    must be accessible to the authenticated Earth Engine account (same project or
+    granted read permissions).
 
     **Supported Formats:**
 
@@ -547,22 +719,20 @@ class GeoTiffToGEEImage:
 
     **Use Cases:**
 
-    - Upload custom classification results for further analysis
-    - Incorporate local survey data or field measurements
-    - Import external satellite imagery not available in GEE
-    - Upload processed results from other software for visualization
+    - Bring Cloud Storage exports back into GEE workflows
+    - Share processed rasters across projects via Cloud Storage
+    - Avoid local file transfers when working entirely in the cloud
 
     **Important Notes:**
 
-    - File must be in a supported geographic projection (preferably WGS84)
-    - Large files may take time to upload and process
-    - Ensure sufficient storage quota in your GEE account
-    - File path must be accessible from the KNIME environment
+    - Provide the path as ``bucket/folder/file.tif`` or ``gs://bucket/folder/file.tif``
+    - The authenticated account must have read access to the bucket/object
+    - The GeoTIFF should be Cloud Optimized (recommended for faster access)
     """
 
-    local_tiff_path = knext.StringParameter(
-        "Local GeoTIFF Path",
-        "Full path to the local GeoTIFF file to upload",
+    cloud_tiff_path = knext.StringParameter(
+        "Cloud Storage GeoTIFF Path",
+        "Path to the GeoTIFF in Google Cloud Storage (e.g., 'my-bucket/folder/file.tif').",
         default_value="",
     )
 
@@ -571,19 +741,30 @@ class GeoTiffToGEEImage:
 
     def execute(self, exec_context: knext.ExecutionContext, gee_connection):
         import ee
-        import geemap
         import logging
         import json
         import os
 
         LOGGER = logging.getLogger(__name__)
 
-        # Validate file path
-        if not self.local_tiff_path or not os.path.exists(self.local_tiff_path):
-            raise FileNotFoundError(f"GeoTIFF file not found: {self.local_tiff_path}")
+        cloud_path = (self.cloud_tiff_path or "").strip()
+        if not cloud_path:
+            raise ValueError(
+                "Please provide the Cloud Storage path to the GeoTIFF (e.g., 'bucket/folder/file.tif')."
+            )
 
-        # Convert local GeoTIFF to GEE image
-        image = geemap.tif_to_ee(self.local_tiff_path)
+        if not cloud_path.startswith("gs://"):
+            cloud_path = f"gs://{cloud_path.lstrip('/')}"
+        if not cloud_path.lower().endswith(".tif"):
+            cloud_path = knut.ensure_file_extension(cloud_path, ".tif")
+
+        LOGGER.info(f"Loading GeoTIFF from Cloud Storage: {cloud_path}")
+
+        try:
+            image = ee.Image.loadGeoTIFF(cloud_path)
+        except Exception as exc:
+            LOGGER.error(f"Failed to load GeoTIFF from Cloud Storage: {exc}")
+            raise
 
         # Get basic image information for display
         info = image.getInfo()
@@ -593,7 +774,7 @@ class GeoTiffToGEEImage:
         html = f"""
         <div style="font-family: monospace; font-size: 12px;">
             <h3>Imported Image Information</h3>
-            <p><strong>File:</strong> {os.path.basename(self.local_tiff_path)}</p>
+            <p><strong>Path:</strong> {cloud_path}</p>
             <pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto;">
             {json_string}
             </pre>

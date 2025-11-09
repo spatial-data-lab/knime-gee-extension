@@ -929,16 +929,16 @@ class GeoTableToFeatureCollection:
 
 
 ############################################
-# Feature Collection to Drive
+# Feature Collection Exporter
 ############################################
 
 
 @knext.node(
-    name="Feature Collection to Drive",
+    name="Feature Collection Exporter",
     node_type=knext.NodeType.SINK,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "Feature2Drive.png",
-    id="fc2drive",
+    icon_path=__NODE_ICON_PATH + "Feature2Cloud.png",
+    id="fcexporter",
     after="fc2table",
 )
 @knext.input_port(
@@ -946,93 +946,77 @@ class GeoTableToFeatureCollection:
     description="GEE Feature Collection connection with embedded feature collection object.",
     port_type=gee_feature_collection_port_type,
 )
-class FeatureCollectionToDrive:
-    """Exports a Google Earth Engine FeatureCollection to Google Drive.
+class FeatureCollectionExporter:
+    """Exports a FeatureCollection to Google Drive or Google Cloud Storage.
 
-    This node exports a FeatureCollection to Google Drive using GEE's Export.table.toDrive()
-    function. This is the recommended method for large Feature Collections as it uses GEE's
-    batch processing system and has no payload size limits.
+    **Authentication & Scopes**
 
-    **Authentication Requirements:**
+    - Always include ``https://www.googleapis.com/auth/earthengine`` in the Google Authenticator node.
+    - *Drive exports* additionally require a Drive scope such as ``https://www.googleapis.com/auth/drive``.
+    - *Cloud exports* additionally require ``https://www.googleapis.com/auth/cloud-platform``.
+    - When authenticating with a **Service Account**, add the cloud-platform scope; Drive export is not supported for service accounts.
+    - When using **Interactive Authentication**, you can add both scopes and choose either destination.
 
-    **IMPORTANT**: This node requires **Interactive Authentication** (not Service Account).
+    **Destination Path**
 
-    In the Google Authenticator node, you must:
-    1. Select "Interactive" authentication method (not Service Account)
-    2. Set scope to "Custom"
-    3. Add the following TWO scopes (click "+ Add scope" for the second one):
-       - https://www.googleapis.com/auth/earthengine (required for GEE operations)
-       - https://www.googleapis.com/auth/drive.file (required for Drive export)
-         OR https://www.googleapis.com/auth/drive (full Drive access)
+    - Drive: ``DriveFolder/file_name`` (file extension appended automatically).
+    - Cloud Storage: ``bucket/path/file_name`` (object created directly under the bucket path).
 
-    **Note**: Service accounts cannot export to Google Drive (no storage quota).
-    Use "Feature Collection to Cloud Storage" node instead for Service Account authentication.
+    **Export Formats & Files**
 
-    **Export Formats:**
+    - ``CSV`` → Creates a single ``.csv`` file (geometry as WKT).
+    - ``GeoJSON`` → Creates a single ``.geojson`` file (full geometry).
+    - ``KML`` → Creates a ``.kml`` file.
+    - ``KMZ`` → Creates a compressed ``.kmz`` file.
+    - ``SHP`` → Generates multiple shapefile components (``.shp``, ``.shx``, ``.dbf``, ``.prj``) in the chosen destination; consider using CSV/GeoJSON for simplicity.
 
-    - **CSV**: Tabular format with geometry as WKT (Well-Known Text) in a column
-    - **GeoJSON**: Standard GeoJSON format with full geometry support
-    - **KML**: Google Earth format
-    - **KMZ**: Compressed KML format
-    - **SHP**: Shapefile format (exports multiple files)
-
-    **Advantages over Direct Conversion:**
-
-    - **No payload limits**: Can handle millions of features
-    - **Batch processing**: Uses GEE's efficient export system
-    - **Reliable**: Designed for production workflows
-    - **Supports large geometries**: No memory constraints
-
-    **Output Location:**
-
-    The file will be exported to your Google Drive in the folder specified (default: "EEexport").
-    After export completes, you can download it from Google Drive or use it
-    in other workflows.
-
-    **Task Description:**
-
-    The export task description is automatically generated as "KNIME Feature Collection Export"
-    with a timestamp for easy identification.
-
-    **Use Cases:**
-
-    - Large classification results
-    - Extensive sampling data
-    - Administrative boundaries with many attributes
-    - Any Feature Collection that exceeds the 10MB payload limit
-
-    **Comparison with Other Export Nodes:**
-
-    - **Feature Collection to Table**: Fast, direct conversion, but limited to small collections
-    - **Feature Collection to Drive**: Slower, but handles unlimited size (Interactive auth only)
-    - **Feature Collection to Cloud Storage**: Works with both Interactive and Service Account auth
+    Enable "Wait for Completion" to block until the export finishes (with a configurable timeout).
     """
 
-    file_format = knext.StringParameter(
+    class DestinationModeOptions(knext.EnumParameterOptions):
+        CLOUD = (
+            "Google Cloud Storage",
+            "Export FeatureCollection to a Google Cloud Storage bucket.",
+        )
+        DRIVE = ("Google Drive", "Export FeatureCollection to a Google Drive folder.")
+
+        @classmethod
+        def get_default(cls):
+            return cls.CLOUD
+
+    destination = knext.EnumParameter(
+        label="Destination Mode",
+        description="Select export destination. Drive requires interactive authentication with Drive scope.",
+        default_value=DestinationModeOptions.get_default().name,
+        enum=DestinationModeOptions,
+    )
+
+    export_format = knext.StringParameter(
         "Export Format",
-        "Format for the exported file",
+        "Format for the exported file.",
         default_value="CSV",
         enum=["CSV", "GeoJSON", "KML", "KMZ", "SHP"],
     )
 
-    folder = knext.StringParameter(
-        "Drive Folder",
-        "Google Drive folder name where the file will be exported",
-        default_value="EEexport",
-    )
-
-    file_name = knext.StringParameter(
-        "File Name",
-        "Name of the exported file (without extension, extension will be added automatically based on format)",
-        default_value="feature_collection_export",
+    export_path = knext.StringParameter(
+        "Destination Path",
+        "Destination path (Drive: 'DriveFolder/file'; Cloud Storage: 'bucket/path/file').",
+        default_value="EEexport/feature_collection_export",
     )
 
     wait_for_completion = knext.BoolParameter(
         "Wait for Completion",
-        "If enabled, the node will wait until the export task completes before finishing. "
-        "If disabled, the export will run asynchronously in the background.",
+        "If enabled, the node waits until the export task completes.",
         default_value=False,
     )
+
+    max_wait_seconds = knext.IntParameter(
+        "Max Wait Seconds",
+        "Maximum number of seconds to wait when waiting is enabled.",
+        default_value=600,
+        min_value=1,
+        is_advanced=True,
+    ).rule(knext.OneOf(wait_for_completion, [True]), knext.Effect.SHOW)
 
     def configure(self, configure_context, input_schema):
         return None
@@ -1049,362 +1033,134 @@ class FeatureCollectionToDrive:
 
         LOGGER = logging.getLogger(__name__)
 
-        # Get feature collection directly from connection object
         feature_collection = fc_connection.feature_collection
 
+        destination = self.destination or self.DestinationModeOptions.get_default().name
+
+        format_map = {
+            "CSV": "CSV",
+            "GeoJSON": "GeoJSON",
+            "KML": "KML",
+            "KMZ": "KMZ",
+            "SHP": "SHP",
+        }
+        gee_format = format_map.get(self.export_format, "CSV")
+
+        ext_map = {
+            "CSV": ".csv",
+            "GeoJSON": ".geojson",
+            "KML": ".kml",
+            "KMZ": ".kmz",
+            "SHP": ".shp",
+        }
+        file_ext = ext_map.get(self.export_format, ".csv")
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        description = f"KNIME Feature Collection Export {timestamp}"
+
+        path = (self.export_path or "").strip()
+        if not path:
+            raise ValueError("Destination path is required.")
+
         try:
-            # Generate description with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            description = f"KNIME Feature Collection Export {timestamp}"
+            destination_option = self.DestinationModeOptions[destination]
+        except KeyError as exc:
+            valid = ", ".join(opt.name for opt in self.DestinationModeOptions)
+            raise ValueError(
+                f"Unsupported destination '{self.destination}'. Choose one of [{valid}]."
+            ) from exc
 
-            # Map format to GEE format string
-            format_map = {
-                "CSV": "CSV",
-                "GeoJSON": "GeoJSON",
-                "KML": "KML",
-                "KMZ": "KMZ",
-                "SHP": "SHP",
-            }
-            gee_format = format_map.get(self.file_format, "CSV")
-
-            # Get file extension for display
-            ext_map = {
-                "CSV": ".csv",
-                "GeoJSON": ".geojson",
-                "KML": ".kml",
-                "KMZ": ".kmz",
-                "SHP": ".shp",  # Note: SHP exports multiple files
-            }
-            file_ext = ext_map.get(self.file_format, ".csv")
+        if destination_option is self.DestinationModeOptions.DRIVE:
+            if "/" in path:
+                folder, prefix = path.rsplit("/", 1)
+            else:
+                folder, prefix = "EEexport", path
 
             LOGGER.warning(
-                f"Starting Feature Collection export to Google Drive: {self.folder}/{self.file_name}{file_ext}"
+                "Exporting FeatureCollection to Drive folder '%s' as '%s%s' (format: %s).",
+                folder,
+                prefix,
+                file_ext,
+                self.export_format,
             )
-            LOGGER.warning(f"Export format: {self.file_format}")
 
-            # Create export task
             task = ee.batch.Export.table.toDrive(
                 collection=feature_collection,
                 description=description,
-                folder=self.folder,
-                fileNamePrefix=self.file_name,
+                folder=folder,
+                fileNamePrefix=prefix,
                 fileFormat=gee_format,
             )
+        else:
+            if not path.startswith("gs://"):
+                path = f"gs://{path.lstrip('/')}"
+            path = path.rstrip("/")
 
-            # Start the task
-            task.start()
-            LOGGER.warning(f"Export task started: {task.id}")
-
-            if self.wait_for_completion:
-                LOGGER.warning("Waiting for export to complete...")
-                while task.active():
-                    time.sleep(5)
-                    LOGGER.warning(
-                        "Export still running, checking again in 5 seconds..."
-                    )
-
-                # Check task status
-                status = task.status()
-                if status["state"] == "COMPLETED":
-                    LOGGER.warning(
-                        f"Export completed successfully! "
-                        f"File available at: Google Drive > {self.folder} > {self.file_name}{file_ext}"
-                    )
-                    if self.file_format == "SHP":
-                        LOGGER.warning(
-                            "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj). "
-                            "All files will be in the same folder."
-                        )
-                elif status["state"] == "FAILED":
-                    error_msg = status.get("error_message", "Unknown error")
-                    raise RuntimeError(f"Export task failed: {error_msg}")
-                else:
-                    LOGGER.warning(f"Export task status: {status['state']}")
-            else:
-                LOGGER.warning(
-                    f"Export task started in background. "
-                    f"Task ID: {task.id}. "
-                    f"Check status in GEE Code Editor or wait for it to complete."
-                )
-                LOGGER.warning(
-                    f"File will be available at: Google Drive > {self.folder} > {self.file_name}{file_ext}"
-                )
-                if self.file_format == "SHP":
-                    LOGGER.warning(
-                        "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj)."
-                    )
-
-            return None
-
-        except Exception as e:
-            LOGGER.error(f"Feature Collection export to Drive failed: {e}")
-            raise
-
-
-############################################
-# Feature Collection to Cloud Storage
-############################################
-
-
-@knext.node(
-    name="Feature Collection to Cloud Storage",
-    node_type=knext.NodeType.SINK,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "Feature2Cloud.png",
-    id="fc2cloudstorage",
-    after="fc2drive",
-)
-@knext.input_port(
-    name="GEE Feature Collection Connection",
-    description="GEE Feature Collection connection with embedded feature collection object.",
-    port_type=gee_feature_collection_port_type,
-)
-class FeatureCollectionToCloudStorage:
-    """Exports a Google Earth Engine FeatureCollection to Google Cloud Storage.
-
-    This node exports a FeatureCollection to Google Cloud Storage using GEE's Export.table.toCloudStorage()
-    function. This is the recommended method for large Feature Collections when using Service Account
-    authentication, as it uses GEE's batch processing system and has no payload size limits.
-
-    **IMPORTANT - Authentication Requirements:**
-
-    **You MUST add TWO scopes** in the Google Authenticator node:
-
-    1. Set scope to "Custom"
-    2. Add the following TWO scopes (click "+ Add scope" for the second one):
-       - https://www.googleapis.com/auth/earthengine (required for GEE operations)
-       - https://www.googleapis.com/auth/cloud-platform (required for Cloud Storage access)
-
-    This applies to both **Interactive Authentication** and **Service Account** authentication.
-
-    **Setup Steps:**
-
-    1. **Create Cloud Storage Bucket FIRST** (before using this node):
-       - Go to Google Cloud Console > Cloud Storage > Buckets
-       - Create a new bucket (or use an existing one)
-       - Note the exact bucket name (e.g., "my-project-bucket")
-       - **IMPORTANT**: You must create the bucket before running this node
-
-    2. **Configure Service Account IAM Role** (for Service Account auth):
-       - Go to Google Cloud Console > IAM & Admin > IAM
-       - Find your service account and click the Edit icon
-       - Add "Storage Admin" or "Storage Object Admin" role
-       - Click "Save" and wait a few minutes for activation
-
-    3. **Add Scopes in Google Authenticator** (as described above)
-
-    **Cost Warning:**
-
-    ⚠️ **Google Cloud Storage has usage costs**. You will be charged for:
-    - Storage: Data stored in the bucket (per GB per month)
-    - Operations: Write operations (PUT requests)
-    - Network: Data transfer out of Cloud Storage (if downloading)
-
-    For pricing details, see: https://cloud.google.com/storage/pricing
-
-    To minimize costs:
-    - Delete exported files after downloading
-    - Use lifecycle policies to auto-delete old files
-    - Monitor usage in Google Cloud Console
-
-    **Export Formats:**
-
-    - **CSV**: Tabular format with geometry as WKT (Well-Known Text) in a column
-    - **GeoJSON**: Standard GeoJSON format with full geometry support
-    - **KML**: Google Earth format
-    - **KMZ**: Compressed KML format
-    - **SHP**: Shapefile format (exports multiple files)
-
-    **Advantages over Direct Conversion:**
-
-    - **No payload limits**: Can handle millions of features
-    - **Batch processing**: Uses GEE's efficient export system
-    - **Reliable**: Designed for production workflows
-    - **Supports large geometries**: No memory constraints
-    - **Service Account compatible**: Works with Service Account authentication
-
-    **Output Location:**
-
-    The file will be exported directly to your Google Cloud Storage bucket root (e.g., `gs://bucket-name/file_name.csv`).
-    After export completes, you can download it from Cloud Storage using:
-    - Google Cloud Console > Cloud Storage > Browser
-    - gsutil command: `gsutil cp gs://bucket-name/file_name.csv .`
-    - Or use it in other Google Cloud workflows
-
-    **Task Description:**
-
-    The export task description is automatically generated as "KNIME Feature Collection Export"
-    with a timestamp for easy identification.
-
-    **Use Cases:**
-
-    - Large classification results (Service Account recommended)
-    - Extensive sampling data
-    - Administrative boundaries with many attributes
-    - Any Feature Collection that exceeds the 10MB payload limit
-    - Production workflows using Service Account authentication
-
-    **Comparison with Other Export Nodes:**
-
-    - **Feature Collection to Table**: Fast, direct conversion, but limited to small collections
-    - **Feature Collection to Drive**: Works with Interactive auth only (Service Account not supported)
-    - **Feature Collection to Cloud Storage**: Works with both Interactive and Service Account auth
-    """
-
-    bucket = knext.StringParameter(
-        "Cloud Storage Bucket",
-        "**IMPORTANT**: Google Cloud Storage bucket name (e.g., 'my-project-bucket' or 'my-project.appspot.com'). "
-        "The bucket MUST exist before running this node. Create it in Google Cloud Console > Cloud Storage > Buckets. "
-        "Your service account must have write permissions (Storage Admin or Storage Object Admin role).",
-        default_value="",
-    )
-
-    file_format = knext.StringParameter(
-        "Export Format",
-        "Format for the exported file",
-        default_value="CSV",
-        enum=["CSV", "GeoJSON", "KML", "KMZ", "SHP"],
-    )
-
-    file_name = knext.StringParameter(
-        "File Name",
-        "Name of the exported file (without extension, extension will be added automatically based on format)",
-        default_value="feature_collection_export",
-    )
-
-    wait_for_completion = knext.BoolParameter(
-        "Wait for Completion",
-        "If enabled, the node will wait until the export task completes before finishing. "
-        "If disabled, the export will run asynchronously in the background.",
-        default_value=False,
-    )
-
-    def configure(self, configure_context, input_schema):
-        return None
-
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        fc_connection,
-    ):
-        import ee
-        import logging
-        import time
-        from datetime import datetime
-
-        LOGGER = logging.getLogger(__name__)
-
-        # Get feature collection directly from connection object
-        feature_collection = fc_connection.feature_collection
-
-        try:
-            # Validate bucket name
-            if not self.bucket:
+            if "/" not in path[5:]:
                 raise ValueError(
-                    "Cloud Storage bucket name is required.\n\n"
-                    "**IMPORTANT**: You must create the bucket BEFORE running this node.\n\n"
-                    "To create a bucket:\n"
-                    "1. Go to Google Cloud Console > Cloud Storage > Buckets\n"
-                    "2. Click 'Create Bucket'\n"
-                    "3. Enter a bucket name (e.g., 'my-project-bucket')\n"
-                    "4. Choose location and storage class\n"
-                    "5. Click 'Create'\n\n"
-                    "Also ensure:\n"
-                    "- Your service account has 'Storage Admin' or 'Storage Object Admin' role in IAM\n"
-                    "- You have added TWO scopes in Google Authenticator: "
-                    "https://www.googleapis.com/auth/earthengine and "
-                    "https://www.googleapis.com/auth/cloud-platform"
+                    "Cloud Storage path must include bucket and file name, e.g., 'bucket/path/file'."
                 )
 
-            # Generate description with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            description = f"KNIME Feature Collection Export {timestamp}"
-
-            # Map format to GEE format string
-            format_map = {
-                "CSV": "CSV",
-                "GeoJSON": "GeoJSON",
-                "KML": "KML",
-                "KMZ": "KMZ",
-                "SHP": "SHP",
-            }
-            gee_format = format_map.get(self.file_format, "CSV")
-
-            # Get file extension for display
-            ext_map = {
-                "CSV": ".csv",
-                "GeoJSON": ".geojson",
-                "KML": ".kml",
-                "KMZ": ".kmz",
-                "SHP": ".shp",  # Note: SHP exports multiple files
-            }
-            file_ext = ext_map.get(self.file_format, ".csv")
-
-            # File will be exported directly to bucket root
-            full_path = self.file_name
+            bucket, object_prefix = path[5:].split("/", 1)
 
             LOGGER.warning(
-                f"Starting Feature Collection export to Cloud Storage: gs://{self.bucket}/{full_path}{file_ext}"
+                "Exporting FeatureCollection to Cloud Storage 'gs://%s/%s%s' (format: %s).",
+                bucket,
+                object_prefix,
+                file_ext,
+                self.export_format,
             )
-            LOGGER.warning(f"Export format: {self.file_format}")
 
-            # Create export task to Cloud Storage
             task = ee.batch.Export.table.toCloudStorage(
                 collection=feature_collection,
                 description=description,
-                bucket=self.bucket,
-                fileNamePrefix=full_path,
+                bucket=bucket,
+                fileNamePrefix=object_prefix,
                 fileFormat=gee_format,
             )
 
-            # Start the task
-            task.start()
-            LOGGER.warning(f"Export task started: {task.id}")
+        task.start()
+        LOGGER.warning("Export task started: %s", task.id)
 
-            if self.wait_for_completion:
-                LOGGER.warning("Waiting for export to complete...")
-                while task.active():
-                    time.sleep(5)
-                    LOGGER.warning(
-                        "Export still running, checking again in 5 seconds..."
-                    )
-
-                # Check task status
-                status = task.status()
-                if status["state"] == "COMPLETED":
-                    LOGGER.warning(
-                        f"Export completed successfully! "
-                        f"File available at: gs://{self.bucket}/{full_path}{file_ext}"
-                    )
-                    if self.file_format == "SHP":
-                        LOGGER.warning(
-                            "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj). "
-                            "All files will be in the same location."
-                        )
-                elif status["state"] == "FAILED":
-                    error_msg = status.get("error_message", "Unknown error")
-                    raise RuntimeError(f"Export task failed: {error_msg}")
-                else:
-                    LOGGER.warning(f"Export task status: {status['state']}")
-            else:
-                LOGGER.warning(
-                    f"Export task started in background. "
-                    f"Task ID: {task.id}. "
-                    f"Check status in GEE Code Editor or wait for it to complete."
-                )
-                LOGGER.warning(
-                    f"File will be available at: gs://{self.bucket}/{full_path}{file_ext}"
-                )
-                if self.file_format == "SHP":
-                    LOGGER.warning(
-                        "Note: Shapefile export creates multiple files (.shp, .shx, .dbf, .prj)."
-                    )
-
+        if not self.wait_for_completion:
+            LOGGER.warning(
+                "Export running in background. Monitor task status via GEE Code Editor or API."
+            )
             return None
 
-        except Exception as e:
-            LOGGER.error(f"Feature Collection export to Cloud Storage failed: {e}")
-            raise
+        LOGGER.warning("Waiting for export to complete...")
+        start_time = time.time()
+        max_wait = self.max_wait_seconds
+        check_interval = 5
+
+        while task.active():
+            elapsed = time.time() - start_time
+            if elapsed > max_wait:
+                LOGGER.error(
+                    "Timed out waiting for export task %s after %s seconds.",
+                    task.id,
+                    max_wait,
+                )
+                break
+            LOGGER.warning(
+                "Export still running... elapsed %.1fs (max %ss).",
+                elapsed,
+                max_wait,
+            )
+            time.sleep(check_interval)
+
+        status = task.status()
+        state = status.get("state")
+        if state == "COMPLETED":
+            LOGGER.warning("Export completed successfully.")
+        elif state == "FAILED":
+            raise RuntimeError(
+                f"Export task failed: {status.get('error_message', 'Unknown error')}"
+            )
+        else:
+            LOGGER.warning("Export task ended with state: %s", state)
+
+        return None
 
 
 ############################################
@@ -1418,7 +1174,7 @@ class FeatureCollectionToCloudStorage:
     category=__category,
     icon_path=__NODE_ICON_PATH + "Cloud2Table.png",
     id="cloudstorage2table",
-    after="fc2cloudstorage",
+    after="fcexporter",
 )
 @knext.input_port(
     name="Google Earth Engine Connection",
@@ -1432,60 +1188,14 @@ class FeatureCollectionToCloudStorage:
 class CloudStorageToTable:
     """Reads a file from Google Cloud Storage and converts it to a KNIME table.
 
-    This node reads files exported from GEE (via "Feature Collection to Cloud Storage")
-    and converts them to local DataFrames or GeoDataFrames for further processing in KNIME.
-
-    **Supported File Formats:**
-
-    - **CSV**: Converts to DataFrame (no geometry column)
-    - **GeoJSON**: Converts to GeoDataFrame (with geometry column)
-    - **KML/KMZ**: Converts to GeoDataFrame (with geometry column)
-    - **SHP**: Converts to GeoDataFrame (with geometry column)
-
-    **Authentication Requirements:**
-
-    **You MUST add TWO scopes** in the Google Authenticator node:
-    - https://www.googleapis.com/auth/earthengine (required for GEE operations)
-    - https://www.googleapis.com/auth/cloud-platform (required for Cloud Storage access)
-
-    **File Format Detection:**
-
-    The node automatically detects the file format based on the file extension:
-    - `.csv` → DataFrame (no geometry)
-    - `.geojson` → GeoDataFrame (with geometry)
-    - `.kml`, `.kmz` → GeoDataFrame (with geometry)
-    - `.shp` → GeoDataFrame (with geometry)
-
-    **Output Format:**
-
-    - **CSV files**: Output as DataFrame (tabular data only)
-    - **Geospatial files**: Output as GeoDataFrame (with geometry column)
-
-    **Use Cases:**
-
-    - Reading large Feature Collections exported via "Feature Collection to Cloud Storage"
-    - Processing exported classification results in KNIME
-    - Integrating GEE exports with other KNIME workflows
-    - Converting Cloud Storage exports to local tables for analysis
-
-    **Notes:**
-
-    - The file must exist in the specified bucket before running this node
-    - File path should be relative to bucket root (e.g., "file_name.csv" not "gs://bucket/file_name.csv")
-    - Large files may take time to download and process
+    Provide the file as a single Cloud Storage path such as ``bucket/path/file.ext`` or
+    ``gs://bucket/path/file.ext``. The bucket must already exist and the filename must include
+    the desired extension so the loader can detect CSV, GeoJSON, KML/KMZ, or SHP formats.
     """
 
-    bucket = knext.StringParameter(
-        "Cloud Storage Bucket",
-        "Google Cloud Storage bucket name (e.g., 'my-project-bucket'). "
-        "This must match the bucket used in 'Feature Collection to Cloud Storage' node.",
-        default_value="",
-    )
-
-    file_name = knext.StringParameter(
-        "File Name",
-        "Name of the file in Cloud Storage (e.g., 'feature_collection_export.csv'). "
-        "Include the file extension. The file should be in the bucket root.",
+    cloud_path = knext.StringParameter(
+        "Cloud Storage Path",
+        "Path to the file in Google Cloud Storage (e.g., 'bucket/path/file.csv').",
         default_value="",
     )
 
@@ -1506,22 +1216,16 @@ class CloudStorageToTable:
         LOGGER = logging.getLogger(__name__)
 
         try:
-            # Validate parameters
-            if not self.bucket:
+            cloud_path = (self.cloud_path or "").strip()
+            if not cloud_path:
                 raise ValueError(
-                    "Cloud Storage bucket name is required. "
-                    "Please provide the bucket name used in 'Feature Collection to Cloud Storage' node."
+                    "Cloud Storage path is required (e.g., 'bucket/path/file.csv')."
                 )
 
-            if not self.file_name:
-                raise ValueError(
-                    "File name is required. "
-                    "Please provide the file name exported from 'Feature Collection to Cloud Storage' node."
-                )
+            if not cloud_path.startswith("gs://"):
+                cloud_path = f"gs://{cloud_path.lstrip('/')}"
 
-            LOGGER.warning(
-                f"Reading file from Cloud Storage: gs://{self.bucket}/{self.file_name}"
-            )
+            LOGGER.warning(f"Reading file from Cloud Storage: {cloud_path}")
 
             # Get credentials from GEE connection
             credentials = gee_connection.credentials
@@ -1540,24 +1244,25 @@ class CloudStorageToTable:
                 credentials=credentials, project=gee_connection.spec.project_id
             )
 
-            # Get bucket and file
-            bucket_obj = storage_client.bucket(self.bucket)
-            blob = bucket_obj.blob(self.file_name)
+            bucket_and_object = cloud_path[5:]
+            if "/" not in bucket_and_object:
+                raise ValueError(
+                    "Cloud Storage path must include bucket and object, e.g., 'bucket/path/file.csv'."
+                )
+
+            bucket_name, object_name = bucket_and_object.split("/", 1)
+            bucket_obj = storage_client.bucket(bucket_name)
+            blob = bucket_obj.blob(object_name)
 
             # Check if file exists
             if not blob.exists():
                 raise FileNotFoundError(
-                    f"File not found: gs://{self.bucket}/{self.file_name}\n\n"
-                    f"Please verify:\n"
-                    f"1. The bucket name is correct\n"
-                    f"2. The file name matches the export from 'Feature Collection to Cloud Storage'\n"
-                    f"3. The export task has completed successfully"
+                    f"File not found: {cloud_path}\n\n"
+                    f"Please verify the path and ensure the export task has completed successfully."
                 )
 
             # Determine file format from extension
-            file_ext = (
-                self.file_name.lower().split(".")[-1] if "." in self.file_name else ""
-            )
+            file_ext = object_name.lower().split(".")[-1] if "." in object_name else ""
 
             LOGGER.warning(f"Detected file format: {file_ext}")
 
@@ -1630,7 +1335,7 @@ class CloudStorageToTable:
                         LOGGER.warning("Auto-detected as CSV/DataFrame")
                     except Exception as e:
                         raise ValueError(
-                            f"Unable to determine file format for '{self.file_name}'. "
+                            f"Unable to determine file format for '{self.cloud_path}'. "
                             f"Supported formats: CSV, GeoJSON, KML, KMZ, SHP. "
                             f"Error: {e}"
                         )
