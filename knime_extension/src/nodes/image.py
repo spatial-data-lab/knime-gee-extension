@@ -785,3 +785,234 @@ class GeoTiffToGEEImage:
         return knut.export_gee_image_connection(image, gee_connection), knext.view_html(
             html
         )
+
+
+############################################
+# Image Value Filter
+############################################
+
+
+@knext.node(
+    name="Image Value Filter",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageValueFilter.png",
+    id="imagevaluefilter",
+    after="bandselector",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="Filtered GEE Image connection.",
+    port_type=gee_image_port_type,
+)
+class ImageValueFilter:
+    """Filters an image by applying a single-band comparison.
+
+    Choose the band, comparison operator, and threshold. Pixels that satisfy the condition are retained;
+    others are masked (or optionally set to 0).
+    """
+
+    band_name = knext.StringParameter(
+        "Band Name",
+        "Name of the band to evaluate (must exist in the image).",
+        default_value="",
+    )
+
+    operator = knext.StringParameter(
+        "Operator",
+        "Comparison operator to apply.",
+        default_value=">=",
+        enum=[">=", ">", "<=", "<", "==", "!="],
+    )
+
+    threshold = knext.DoubleParameter(
+        "Threshold",
+        "Threshold value for comparison.",
+        default_value=0.0,
+    )
+
+    retain_values = knext.BoolParameter(
+        "Retain Original Values",
+        "If enabled the original pixel value is kept; otherwise filtered pixels are set to 1.",
+        default_value=False,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        image = image_connection.image
+
+        band = (self.band_name or "").strip()
+        if not band:
+            raise ValueError("Band name is required for Image Value Filter.")
+
+        try:
+            image = image.select([band])
+        except Exception as exc:
+            raise ValueError(f"Band '{band}' not found in image: {exc}")
+
+        threshold = ee.Number(self.threshold)
+
+        ops = {
+            ">=": image.gte,
+            ">": image.gt,
+            "<=": image.lte,
+            "<": image.lt,
+            "==": image.eq,
+            "!=": image.neq,
+        }
+
+        mask_image = ops[self.operator](threshold)
+
+        if self.retain_values:
+            filtered_image = image_connection.image.updateMask(mask_image)
+        else:
+            filtered_image = mask_image.updateMask(mask_image)
+
+        LOGGER.warning(
+            "Applied value filter on band '%s' with operator %s %s",
+            band,
+            self.operator,
+            self.threshold,
+        )
+
+        return knut.export_gee_image_connection(filtered_image, image_connection)
+
+
+############################################
+# Pixels To Feature Collection
+############################################
+
+
+@knext.node(
+    name="Pixels to Feature Collection",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Pixel2FC.png",
+    id="pixelstofc",
+    after="imageclip",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded (binary) image object.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with extracted polygons.",
+    port_type=gee_feature_collection_port_type,
+)
+class PixelsToFeatureCollection:
+    """Vectorizes selected pixels and optionally merges them.
+
+    The input image should be binary (mask or values 0/1). Regions where the band equals 1
+    are converted into polygons. Optional unary union merges all polygons into a single MultiPolygon.
+    """
+
+    band_name = knext.StringParameter(
+        "Band Name",
+        "Name of the band to vectorize.",
+        default_value="",
+    )
+
+    scale = knext.IntParameter(
+        "Vectorization Scale (meters)",
+        "Resolution in meters to use when tracing polygons.",
+        default_value=30,
+        min_value=1,
+        max_value=1000,
+    )
+
+    max_pixels = knext.IntParameter(
+        "Max Pixels",
+        "Maximum number of pixels Earth Engine is allowed to process during vectorization (integer ≤ 2,147,483,647).",
+        default_value=1000000000,
+        min_value=1,
+        is_advanced=True,
+    )
+
+    apply_union = knext.BoolParameter(
+        "Apply Unary Union",
+        "If enabled, the resulting polygons are dissolved into a single MultiPolygon feature.",
+        default_value=True,
+    )
+
+    union_error_margin = knext.DoubleParameter(
+        "Union Error Margin (meters)",
+        "Error margin used when dissolving polygons (only when union is enabled).",
+        default_value=1.0,
+        min_value=0.1,
+        is_advanced=True,
+    ).rule(knext.OneOf(apply_union, [True]), knext.Effect.SHOW)
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        image = image_connection.image
+        band = (self.band_name or "").strip()
+        if not band:
+            raise ValueError("Band name is required for Pixels to Feature Collection.")
+
+        try:
+            single_band = image.select([band])
+        except Exception as exc:
+            raise ValueError(f"Band '{band}' not found in image: {exc}")
+
+        mask = single_band.updateMask(single_band)
+
+        LOGGER.warning(
+            "Vectorizing band '%s' at scale %s m (maxPixels=%s, union=%s)",
+            band,
+            self.scale,
+            self.max_pixels,
+            self.apply_union,
+        )
+
+        vectors = mask.reduceToVectors(
+            geometry=image.geometry(),
+            scale=self.scale,
+            maxPixels=self.max_pixels,
+        )
+
+        if self.apply_union:
+            dissolved_geometry = vectors.geometry().dissolve(
+                maxError=self.union_error_margin
+            )
+            dissolved = ee.FeatureCollection(
+                ee.Feature(
+                    dissolved_geometry,
+                    {"source": "pixels_to_feature_collection"},
+                )
+            )
+            output_fc = dissolved
+        else:
+            output_fc = vectors
+
+        return knut.export_gee_feature_collection_connection(
+            output_fc, image_connection
+        )
