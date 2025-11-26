@@ -247,7 +247,7 @@ def compute_classification_metrics(
 
 
 @knext.node(
-    name="Label Points from Image",
+    name="Label Points from Image Extractor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "PointLabel.png",
@@ -317,14 +317,14 @@ class LabelPointsFromImage:
     label_band = knext.StringParameter(
         "Label band",
         """Band name containing class values in the reference image (e.g., 'landcover'). Leave empty to use first band.
-        Available bands can be explored using the **EE Image Get Info** node.""",
+        Available bands can be explored using the **GEE Image Info Extractor** node.""",
         default_value="",
     )
 
     bands = knext.StringParameter(
         "Bands",
         """Comma-separated list of band names to extract from feature image (e.g., 'B2,B3,B4,B8'). 
-        Leave empty to use all bands. Available bands can be explored using the **EE Image Get Info** node.""",
+        Leave empty to use all bands. Available bands can be explored using the **GEE Image Info Extractor** node.""",
         default_value="",
     )
 
@@ -480,7 +480,7 @@ class LabelPointsFromImage:
 
 
 @knext.node(
-    name="Label Points from Feature Collection",
+    name="Label Points from Feature Collection Extractor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "LabelFeature.png",
@@ -582,7 +582,7 @@ class SampleRegionsForClassification:
     bands = knext.StringParameter(
         "Bands",
         """Comma-separated list of band names to use for training (e.g., 'B2,B3,B4,B8' for Sentinel-2). 
-        Leave empty to use all bands. Available bands can be explored using the **EE Image Get Info** node.""",
+        Leave empty to use all bands. Available bands can be explored using the **GEE Image Info Extractor** node.""",
         default_value="",
     )
 
@@ -804,7 +804,7 @@ class RandomForestLearner:
         "Bands/Features",
         """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). 
         Leave empty to use all properties except label. Available bands/features can be explored using the 
-        **EE Image Get Info** node.""",
+        **GEE Image Info Extractor** node.""",
         default_value="",
     )
 
@@ -1074,7 +1074,7 @@ class CARTLearner:
         "Bands/Features",
         """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8').
         Leave empty to use all properties except label. Available bands/features can be explored using the 
-        **EE Image Get Info** node.""",
+        **GEE Image Info Extractor** node.""",
         default_value="",
     )
 
@@ -1302,7 +1302,7 @@ class SVMLearner:
         "Bands/Features",
         """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). 
         Leave empty to use all properties except label. Available bands/features can be explored using the 
-        **EE Image Get Info** node.""",
+        **GEE Image Info Extractor** node.""",
         default_value="",
     )
 
@@ -1563,7 +1563,7 @@ class NaiveBayesLearner:
         "Bands/Features",
         """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). 
         Leave empty to use all properties except label. ⚠️ Note: Features must be non-negative integers. 
-        Available bands/features can be explored using the **EE Image Get Info** node.""",
+        Available bands/features can be explored using the **GEE Image Info Extractor** node.""",
         default_value="",
     )
 

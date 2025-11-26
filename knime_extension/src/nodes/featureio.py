@@ -134,7 +134,7 @@ class GEEFeatureCollectionFilter:
     contains, etc.) on feature properties. This node is useful for extracting specific subsets of large
     Feature Collections, reducing data size for processing, and focusing analysis on specific administrative units.
 
-    To get a list of available properties, use the "Feature Collection Info" node.
+    To get a list of available properties, use the "Feature Collection Info Extractor" node.
 
     **Filter Operators:**
 
@@ -179,7 +179,7 @@ class GEEFeatureCollectionFilter:
     property_name = knext.StringParameter(
         "Property name",
         """Name of the property to filter by (e.g., 'ADM0_NAME'). To get a list of available properties, 
-        use the "Feature Collection Info" node.""",
+        use the "Feature Collection Info Extractor" node.""",
         default_value="",
     )
 
@@ -506,12 +506,12 @@ class GEEFeatureCollectionSpatialFilter:
 
 
 ############################################
-# Feature Collection Info
+# Feature Collection Info Extractor
 ############################################
 
 
 @knext.node(
-    name="Feature Collection Info",
+    name="Feature Collection Info Extractor",
     node_type=knext.NodeType.VISUALIZER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "fcinfo.png",
@@ -524,7 +524,7 @@ class GEEFeatureCollectionSpatialFilter:
     port_type=gee_feature_collection_port_type,
 )
 @knext.output_table(
-    name="Feature Collection Info Table",
+    name="Feature Collection Info Extractor Table",
     description="Table containing property names, types, and geometry information",
 )
 class GEEFeatureCollectionInfo:
@@ -1006,7 +1006,7 @@ class FeatureCollectionExporter:
     export_path = knext.StringParameter(
         "Destination path",
         "Destination path (Drive: 'DriveFolder/file'; Cloud Storage: 'bucket/path/file').",
-        default_value="EEexport/feature_collection_export",
+        default_value="GEEexport/feature_collection_export",
     )
 
     wait_for_completion = knext.BoolParameter(

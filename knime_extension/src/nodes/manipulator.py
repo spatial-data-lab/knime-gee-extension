@@ -15,7 +15,7 @@ __NODE_ICON_PATH = "icons/icon/manipulator/"
 
 
 ############################################
-# data set mean calculation node
+# dataset mean calculation node
 ############################################
 @knext.node(
     name="Calculate Mean",

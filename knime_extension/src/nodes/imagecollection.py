@@ -33,7 +33,7 @@ __NODE_ICON_PATH = "icons/icon/imagecollection/"
 
 
 @knext.node(
-    name="GEE Dataset Search",
+    name="GEE Dataset Searcher",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "DatasetSearch.png",

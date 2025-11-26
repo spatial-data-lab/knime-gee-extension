@@ -32,7 +32,7 @@ __NODE_ICON_PATH = "icons/icon/image/"
 
 
 @knext.node(
-    name="EE Image Reader",
+    name="GEE Image Reader",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageReader.png",
@@ -93,7 +93,7 @@ class ImageReader:
 
 
 @knext.node(
-    name="EE Image Band Selector",
+    name="GEE Image Band Selector",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "BandSelector.png",
@@ -118,7 +118,7 @@ class ImageBandSelector:
     applications like vegetation analysis, water detection, or optimizing processing speed by selecting only necessary
     bands.
 
-    Available bands vary by image source and can be explored using the **EE Image Get Info** node.
+    Available bands vary by image source and can be explored using the **GEE Image Info Extractor** node.
 
     **Common Band Combinations:**
 
@@ -134,7 +134,7 @@ class ImageBandSelector:
     bands = knext.StringParameter(
         "Bands",
         """Comma-separated list of band names to select (e.g., 'B1,B2,B3'). Leave empty to keep all bands.
-        Available bands can be explored using the **EE Image Get Info** node.""",
+        Available bands can be explored using the **GEE Image Info Extractor** node.""",
         default_value="",
     )
 
@@ -184,7 +184,7 @@ class ImageBandSelector:
 
 
 @knext.node(
-    name="EE Image Get Info",
+    name="GEE Image Info Extractor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageGetInfo.png",
@@ -274,7 +274,7 @@ class ImageGetInfo:
 
 
 @knext.node(
-    name="EE Image Clip",
+    name="GEE Image Cliper",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageClip.png",
@@ -360,7 +360,7 @@ class ImageClip:
 
 
 @knext.node(
-    name="EE Image Exporter",
+    name="GEE Image Exporter",
     node_type=knext.NodeType.SINK,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ExportImage.png",
@@ -421,8 +421,8 @@ class ImageExporter:
 
     drive_path = knext.StringParameter(
         "Drive path",
-        "Drive folder and file name, e.g., 'EEexport/my_image.tiff'.",
-        default_value="EEexport/export.tiff",
+        "Drive folder and file name, e.g., 'GEEexport/my_image.tiff'.",
+        default_value="GEEexport/export.tiff",
     ).rule(
         knext.OneOf(destination, [DestinationModeOptions.DRIVE.name]),
         knext.Effect.SHOW,
@@ -681,12 +681,12 @@ class ImageExporter:
 
 
 ############################################
-# GeoTiff To GEE Image
+# GeoTIFF To GEE Image
 ############################################
 
 
 @knext.node(
-    name="Cloud GeoTiff To EE Image",
+    name="Cloud GeoTIFF to GEE Image",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "GeotiffToGEE.png",
@@ -930,7 +930,7 @@ class PixelsToFeatureCollection:
 
     band_name = knext.StringParameter(
         "Band name",
-        "Name of the band to vectorize. Available bands can be explored using the **EE Image Get Info** node.",
+        "Name of the band to vectorize. Available bands can be explored using the **GEE Image Info Extractor** node.",
         default_value="",
     )
 

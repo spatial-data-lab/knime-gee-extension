@@ -75,7 +75,7 @@ class ImageValueByPoint:
     """
 
     geometry_column = knext.ColumnParameter(
-        "Geometry Column",
+        "Geometry column",
         "Column containing point geometries",
         column_filter=knut.is_geo,
         include_row_key=False,

@@ -47,7 +47,7 @@ class SmileCartClassifier:
     bands = knext.StringParameter(
         "Bands",
         """The bands to use for the classifier. Available bands/features can be explored using the 
-        **EE Image Get Info** node.""",
+        **GEE Image Info Extractor** node.""",
         default_value="B2,B3,B4,B8",
     )
 
@@ -134,7 +134,7 @@ class SimpleCartPredictor:
     bands = knext.StringParameter(
         "Bands",
         """The bands to use for the classifier. Available bands/features can be explored using the 
-        **EE Image Get Info** node.""",
+        **GEE Image Info Extractor** node.""",
         default_value="B2,B3,B4,B8",
     )
 

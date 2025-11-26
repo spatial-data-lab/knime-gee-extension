@@ -128,8 +128,8 @@ class GEEImage:
     """
 
     data_set_id = knext.StringParameter(
-        "Data set ID",
-        "The data set ID for the GEE Image",
+        "Dataset ID",
+        "The dataset ID for the GEE Image",
         default_value="LANDSAT/LE7_TOA_5YEAR/1999_2003",
     )
 
@@ -189,8 +189,8 @@ class GEEFeatureCollection:
     """
 
     data_set_id = knext.StringParameter(
-        "Data set ID",
-        "The data set ID for the GEE Feature Collection",
+        "Dataset ID",
+        "The dataset ID for the GEE Feature Collection",
         default_value="TIGER/2018/States",
     )
 
