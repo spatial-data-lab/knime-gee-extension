@@ -1,12 +1,12 @@
 group_id: sdl.harvard # gourp id
 name: gee # Will be concatenated with the group_id to an ID
-author: Lingbo Liu, Tobias Koetter,Xiaokang Fu
+author: Lingbo Liu, Tobias Koetter, Xiaokang Fu
 vendor: SDL, Harvard, Cambridge US # address
 description: KNIME Google Earth Engine Extension # Human readable bundle name / description
-long_description: KNIME Nodes for Google Earth Engine # 
-version: 0.0.1 # Version of this Python node extension
+long_description: KNIME Nodes for Google Earth Engine #
+version: 0.9.0 # Version of this Python node extension
 license_file: LICENSE.TXT # Best practice: put your LICENSE.TXT next to the knime.yml; otherwise you would need to change to path/to/LICENSE.txt
 extension_module: src/gee_ext # The .py Python module containing the nodes of your extension
 env_yml_path: gee_extension.yml # This is necessary for bundling, but not needed during development
-# feature_dependencies: 
+# feature_dependencies:
 #   - org.knime.features.geospatial 4.7.0 # FIXME: whats this
