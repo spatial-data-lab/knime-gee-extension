@@ -466,25 +466,17 @@ class LocalGeoTableReducer:
     **Statistical Methods:**
 
     - **mean**: Average value within each geometry
-
     - **median**: Median value (robust to outliers)
-
     - **min/max**: Minimum/maximum values
-
     - **count**: Number of valid pixels
-
     - **sum**: Sum of all pixel values
-
     - **stdDev**: Standard deviation
-
     - **variance**: Statistical variance
 
     **Performance Features:**
 
     - **Batch Processing**: Handles large datasets by processing in chunks
-
     - **Configurable Scale**: Control sampling resolution for accuracy vs. speed
-
     - **Multiple Statistics**: Calculate several statistics simultaneously
 
     """
@@ -500,7 +492,16 @@ class LocalGeoTableReducer:
 
     reducer_methods = knext.StringParameter(
         "Reducer Methods",
-        "Comma-separated list of reduction methods (e.g., 'mean,min,max')",
+        """Comma-separated list of reduction methods (e.g., 'mean,min,max'). 
+        Supported methods:
+        
+        - **mean**: Average value within each geometry
+        - **median**: Median value (robust to outliers)
+        - **min/max**: Minimum/maximum values
+        - **count**: Number of valid pixels
+        - **sum**: Sum of all pixel values
+        - **stdDev**: Standard deviation
+        - **variance**: Statistical variance""",
         default_value="mean",
     )
 
@@ -707,7 +708,18 @@ class ReduceRegions:
 
     reducer_methods = knext.StringParameter(
         "Reducer Methods",
-        "Comma-separated list of reduction methods (e.g., 'mean,min,max,stdDev')",
+        """Comma-separated list of reduction methods (e.g., 'mean,min,max,stdDev'). 
+        Supported methods:
+        
+        - **mean**: Average value within each region
+        - **median**: Median value (robust to outliers)
+        - **min/max**: Minimum/maximum values
+        - **count**: Number of valid pixels
+        - **sum**: Sum of all pixel values
+        - **stdDev**: Standard deviation
+        - **variance**: Statistical variance
+        - **percentile**: Custom percentile values
+        """,
         default_value="mean",
     )
 

@@ -85,7 +85,12 @@ class GEEDatasetSearch:
 
     source = knext.StringParameter(
         "Source",
-        "The source to search from GEE data catalog",
+        """The source to search from GEE data catalog:
+        
+        - 'ee': Official Google Earth Engine datasets
+        - 'community': Community-contributed datasets
+        - 'all': Both official and community datasets
+        """,
         default_value="ee",
         enum=["ee", "community", "all"],
     )
@@ -174,27 +179,26 @@ class ImageCollectionReader:
 
     **Common Collections:**
 
-    - Sentinel-2: 'COPERNICUS/S2_SR' (10m resolution, optical)
-
-    - Landsat 8: 'LANDSAT/LC08/C02/T1_L2' (30m resolution, optical)
-
-    - MODIS: 'MODIS/006/MOD13Q1' (250m resolution, vegetation indices)
-
-    - Landsat 7: 'LANDSAT/LE07/C02/T1_L2' (30m resolution, optical)
-
-    - Sentinel-1: 'COPERNICUS/S1_GRD' (10m resolution, radar)
-
+    - [Sentinel-2](https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED): 'COPERNICUS/S2_SR' (10m resolution, optical)
+    - [Landsat 8](https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC08_C02_T1_L2): 'LANDSAT/LC08/C02/T1_L2' (30m resolution, optical)
+    - [MODIS](https://developers.google.com/earth-engine/datasets/catalog/MODIS_006_MOD13Q1): 'MODIS/006/MOD13Q1' (250m resolution, vegetation indices)
+    - [Landsat 7](https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LE07_C02_T1_L2): 'LANDSAT/LE07/C02/T1_L2' (30m resolution, optical)
+    - [Sentinel-1](https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S1_GRD): 'COPERNICUS/S1_GRD' (10m resolution, radar)
     **Workflow Design:**
 
     - Use this node to load the collection
     - Use **Image Collection Filter** for time, cloud, and property filtering
     - Use **Image Collection Spatial Filter** for spatial filtering and clipping
     - Use **Image Collection Aggregator** to create composite images
+
+    **Note:** The GEE Dataset Search node can help you find more image collections.
     """
 
     collection_id = knext.StringParameter(
         "Collection ID",
-        "The ID of the GEE image collection (e.g., 'COPERNICUS/S2_SR')",
+        """The ID of the GEE image collection (e.g., 'COPERNICUS/S2_SR'). 
+        You can use the GEE Dataset Search node to find available collections or 
+        visit [GEE Datasets Catalog](https://developers.google.com/earth-engine/datasets/catalog).""",
         default_value="COPERNICUS/S2_SR",
     )
 
@@ -269,7 +273,6 @@ class ImageCollectionGeneralFilter:
     **Important Notes:**
 
     - The end date is **inclusive** - selecting 2024-10-06 will include images from that entire day
-    - For custom property filtering (e.g., orbit direction, tile ID), use the **Image Collection Value Filter** node
     - This node uses lazy evaluation for fast performance - the actual computation happens downstream
     """
 
@@ -730,7 +733,7 @@ class ImageCollectionSpatialFilter:
 
     clip_to_roi = knext.BoolParameter(
         "Clip to ROI",
-        "Clip each image to the ROI boundary",
+        "Clip each image to the ROI boundary. Note: This may increase processing time.",
         default_value=False,
     )
 
@@ -842,7 +845,19 @@ class ImageCollectionAggregator:
 
     aggregation_method = knext.StringParameter(
         "Aggregation Method",
-        "Method to aggregate multiple images into one",
+        """Method to aggregate multiple images into one. 
+        Available methods:
+        
+        - **first**: Returns the first image (useful for already-filtered collections)
+        - **last**: Returns the most recent image
+        - **mean**: Calculates pixel-wise mean (good for reducing noise)
+        - **median**: Calculates pixel-wise median (robust to outliers, best for cloud removal)
+        - **min**: Finds minimum values (useful for NDVI minimum)
+        - **max**: Finds maximum values (useful for NDVI maximum)
+        - **sum**: Adds pixel values (useful for accumulation)
+        - **mode**: Finds most frequent values (useful for classification)
+        - **mosaic**: Creates a mosaic (first valid pixel)
+        """,
         default_value="median",
         enum=["first", "last", "mean", "median", "min", "max", "sum", "mode", "mosaic"],
     )

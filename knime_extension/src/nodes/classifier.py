@@ -69,6 +69,7 @@ class SmileCartClassifier:
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle
@@ -142,6 +143,7 @@ class SimpleCartPredictor:
         self, exec_context: knext.ExecutionContext, input_binary, input_binary_1
     ):
         import ee
+
         ee.Authenticate()
         ee.Initialize()
         import pickle

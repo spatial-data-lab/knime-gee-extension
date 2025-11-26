@@ -55,22 +55,24 @@ class ImageReader:
     This node allows you to access individual satellite images, elevation data, or other geospatial datasets from GEE's
     extensive catalog for further analysis in KNIME workflows.
 
+    Visit [GEE Datasets Catalog](https://developers.google.com/earth-engine/datasets/catalog) to explore available
+    datasets and their image IDs.
+
     **Common Image Examples:**
 
-    - Elevation: 'USGS/SRTMGL1_003' (30m resolution)
-
-    - ESA Elevation: 'ESA/WorldCover/v100' (10m resolution)
-
-    - WorldPop Population: 'CIESIN/GPWv411/GPW_Population_Density' (30 arc-second)
-
-    - Global Forest: 'UMD/hansen/global_forest_change_2021_v1_9' (30m resolution)
-
-    - Global Settlement: 'WSF/WSF_v1' (10m resolution)
+    - [Elevation](https://developers.google.com/earth-engine/datasets/catalog/USGS_SRTMGL1_003): 'USGS/SRTMGL1_003' (30m resolution)
+    - [ESA Elevation](https://developers.google.com/earth-engine/datasets/catalog/ESA_WorldCover_v100): 'ESA/WorldCover/v100' (10m resolution)
+    - [WorldPop Population](https://developers.google.com/earth-engine/datasets/catalog/CIESIN_GPWv411_GPW_Population_Density): 'CIESIN/GPWv411/GPW_Population_Density' (30 arc-second)
+    - [Global Forest](https://developers.google.com/earth-engine/datasets/catalog/UMD_hansen_global_forest_change_2021_v1_9): 'UMD/hansen/global_forest_change_2021_v1_9' (30m resolution)
+    - [Global Settlement](https://developers.google.com/earth-engine/datasets/catalog/DLR_WSF_WSF2015_v1): 'DLR/WSF/WSF2015/v1' (10m resolution)
     """
 
     imagename = knext.StringParameter(
         "Image Name",
-        "The name/ID of the GEE image to load (e.g., 'USGS/SRTMGL1_003')",
+        """The name/ID of the GEE image to load (e.g., 'USGS/SRTMGL1_003')
+        You can use the GEE Dataset Search node to find available images or 
+        visit [GEE Datasets Catalog](https://developers.google.com/earth-engine/datasets/catalog).
+        """,
         default_value="USGS/SRTMGL1_003",
     )
 
@@ -111,17 +113,18 @@ class ImageReader:
 class ImageBandSelector:
     """Filters and selects specific bands from a Google Earth Engine image.
 
-    This node allows you to filter and select specific bands from a Google Earth Engine image, allowing you to focus on relevant spectral information and reduce data size.
-    This node is useful for preparing images for specific applications like vegetation analysis, water detection, or optimizing processing speed by selecting only necessary bands.
+    This node allows you to filter and select specific bands from a Google Earth Engine image, allowing you to focus
+    on relevant spectral information and reduce data size. This node is useful for preparing images for specific
+    applications like vegetation analysis, water detection, or optimizing processing speed by selecting only necessary
+    bands.
+
+    Available bands vary by image source and can be explored using the **EE Image Get Info** node.
 
     **Common Band Combinations:**
 
     - **RGB**: 'B4,B3,B2' (Sentinel-2) or 'B4,B3,B2' (Landsat 8)
-
     - **False Color**: 'B8,B4,B3' (Sentinel-2) - good for vegetation
-
     - **SWIR**: 'B12,B8,B4' (Sentinel-2) - good for moisture detection
-
     - **NDVI Bands**: 'B8,B4' (Sentinel-2) - for vegetation index calculation
 
 
@@ -130,7 +133,8 @@ class ImageBandSelector:
 
     bands = knext.StringParameter(
         "Bands",
-        "Comma-separated list of band names to select (e.g., 'B1,B2,B3'). Leave empty to keep all bands.",
+        """Comma-separated list of band names to select (e.g., 'B1,B2,B3'). Leave empty to keep all bands.
+        Available bands can be explored using the **EE Image Get Info** node.""",
         default_value="",
     )
 
@@ -926,7 +930,7 @@ class PixelsToFeatureCollection:
 
     band_name = knext.StringParameter(
         "Band Name",
-        "Name of the band to vectorize.",
+        "Name of the band to vectorize. Available bands can be explored using the **EE Image Get Info** node.",
         default_value="",
     )
 

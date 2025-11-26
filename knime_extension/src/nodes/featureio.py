@@ -55,26 +55,27 @@ class GEEFeatureCollectionReader:
     points of interest, or other geospatial vector data from GEE's extensive catalog.
     The node outputs a GEE Feature Collection connection object for further processing.
 
+    Visit [GEE Datasets Catalog](https://developers.google.com/earth-engine/datasets/catalog) to explore available
+    datasets and their image IDs.
+
     **Common Feature Collections:**
 
-    - **GAUL Administrative Units**: 'FAO/GAUL/2015/level0' (country boundaries)
+    - [GAUL Administrative Units](https://developers.google.com/earth-engine/datasets/catalog/FAO_GAUL_2015_level0): 'FAO/GAUL/2015/level0' (country boundaries)
+    - [GAUL Level 1](https://developers.google.com/earth-engine/datasets/catalog/FAO_GAUL_2015_level1): 'FAO/GAUL/2015/level1' (state/province boundaries)
+    - [GAUL Level 2](https://developers.google.com/earth-engine/datasets/catalog/FAO_GAUL_2015_level2): 'FAO/GAUL/2015/level2' (county/district boundaries)
+    - [World Countries](https://developers.google.com/earth-engine/datasets/catalog/USDOS_LSIB_SIMPLE_2017): 'USDOS/LSIB_SIMPLE/2017' (country boundaries)
+    - [US States](https://developers.google.com/earth-engine/datasets/catalog/TIGER_2018_States): 'TIGER/2018/States' (US state boundaries)
+    - [Protected Areas](https://developers.google.com/earth-engine/datasets/catalog/WCMC_WDPA_current_polygons): 'WCMC/WDPA/current/polygons' (protected areas)
+    - [Cities](https://developers.google.com/earth-engine/datasets/catalog/USDOS_LSIB_SIMPLE_2017): 'USDOS/LSIB_SIMPLE/2017' (city boundaries)
 
-    - **GAUL Level 1**: 'FAO/GAUL/2015/level1' (state/province boundaries)
-
-    - **GAUL Level 2**: 'FAO/GAUL/2015/level2' (county/district boundaries)
-
-    - **World Countries**: 'USDOS/LSIB_SIMPLE/2017' (country boundaries)
-
-    - **US States**: 'TIGER/2018/States' (US state boundaries)
-
-    - **Protected Areas**: 'WCMC/WDPA/current/polygons' (protected areas)
-
-    - **Cities**: 'USDOS/LSIB_SIMPLE/2017' (city boundaries)
+    **Note:** The GEE Dataset Search node can help you find more feature collections.
     """
 
     collection_id = knext.StringParameter(
         "Collection ID",
-        "The ID of the GEE feature collection (e.g., 'FAO/GAUL/2015/level0')",
+        """The ID of the GEE feature collection (e.g., 'FAO/GAUL/2015/level0'). 
+        You can use the GEE Dataset Search node to find available collections or 
+        visit [GEE Datasets Catalog](https://developers.google.com/earth-engine/datasets/catalog).""",
         default_value="FAO/GAUL/2015/level0",
     )
 
@@ -130,8 +131,10 @@ class GEEFeatureCollectionFilter:
     """Filters a Google Earth Engine Feature Collection based on property values with advanced comparison operators.
 
     This node allows you to filter Feature Collections using various comparison operators (equals, greater than,
-    contains, etc.) on feature properties. This node is useful for extracting specific subsets of large Feature Collections,
-    reducing data size for processing, and focusing analysis on specific administrative units.
+    contains, etc.) on feature properties. This node is useful for extracting specific subsets of large
+    Feature Collections, reducing data size for processing, and focusing analysis on specific administrative units.
+
+    To get a list of available properties, use the "Feature Collection Info" node.
 
     **Filter Operators:**
 
@@ -143,13 +146,9 @@ class GEEFeatureCollectionFilter:
     **Common Use Cases:**
 
     - Extract specific countries from global administrative boundaries
-
     - Filter protected areas by type or status
-
     - Filter by numeric properties (e.g., administrative levels, IDs)
-
     - Complex string pattern matching
-
     - Multi-value filtering
 
     **Note:** For spatial filtering, use the "Feature Collection Spatial Filter" node.
@@ -179,7 +178,8 @@ class GEEFeatureCollectionFilter:
 
     property_name = knext.StringParameter(
         "Property Name",
-        "Name of the property to filter by (e.g., 'ADM0_NAME').",
+        """Name of the property to filter by (e.g., 'ADM0_NAME'). To get a list of available properties, 
+        use the "Feature Collection Info" node.""",
         default_value="",
     )
 
@@ -382,34 +382,26 @@ class GEEFeatureCollectionSpatialFilter:
     **Spatial Operations:**
 
     - **Intersects**: Find features that spatially intersect with the filter geometry
-
     - **Contains**: Find features that completely contain the filter geometry
-
     - **Within**: Find features that are completely within the filter geometry
-
     - **Disjoint**: Find features that are completely separate from the filter geometry
-
     - **Within Distance**: Find features within a specified distance of the filter geometry
-
     - **Clip to Shape**: Clip features to the exact shape of the filter geometry
-
     - **Intersects Bounding Box**: Fast but less precise filtering using bounding boxes
 
     **Common Use Cases:**
 
     - Extract features within study areas or administrative boundaries
-
     - Find features near roads, cities, or other reference features
-
-
     - Perform spatial analysis and geographic filtering
-
     - Remove or isolate features based on spatial relationships
 
     **Performance Notes:**
 
     - **Intersects Bounding Box**: Fastest but less precise
     - **Intersects**: Precise but slower
+
+    **Note:** For value based filtering, use the "Feature Collection Value Filter" node.
     """
 
     # Define all available spatial operations
@@ -688,7 +680,7 @@ class FeatureCollectionToTable:
     - Testing and debugging workflows
 
     **For Large Datasets:**
-    - Use **"Feature Collection to Drive"** node for large collections
+    - Use **"Feature Collection Exporter"** node for large collections
     - Export uses GEE's batch processing system (no payload limits)
     - Suitable for production workflows with millions of features
 
@@ -701,12 +693,17 @@ class FeatureCollectionToTable:
 
     If you encounter errors like "Request payload size exceeds the limit",
     your Feature Collection is too large for direct conversion. Please use
-    the "Feature Collection to Drive" node instead.
+    the "Feature Collection Exporter" node instead.
     """
 
     file_format = knext.StringParameter(
         "Output Format",
-        "Format for the output table",
+        """Format for the output table. 
+        **Output Formats:**
+        
+        - **DataFrame**: Standard tabular format with attribute data only
+        - **GeoDataFrame**: Tabular format with embedded geometry information
+        """,
         default_value="DataFrame",
         enum=["DataFrame", "GeoDataFrame"],
     )
@@ -993,7 +990,15 @@ class FeatureCollectionExporter:
 
     export_format = knext.StringParameter(
         "Export Format",
-        "Format for the exported file.",
+        """Format for the exported file. Available formats:
+        
+        - ``CSV`` → Creates a single ``.csv`` file (geometry as WKT).
+        - ``GeoJSON`` → Creates a single ``.geojson`` file (full geometry).
+        - ``KML`` → Creates a ``.kml`` file.
+        - ``KMZ`` → Creates a compressed ``.kmz`` file.
+        - ``SHP`` → Generates multiple shapefile components (``.shp``, ``.shx``, ``.dbf``, ``.prj``) in the chosen 
+        destination; consider using CSV/GeoJSON for simplicity.
+        """,
         default_value="CSV",
         enum=["CSV", "GeoJSON", "KML", "KMZ", "SHP"],
     )

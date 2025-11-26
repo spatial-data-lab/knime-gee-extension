@@ -155,6 +155,9 @@ google_earth_engine_port_type = knext.port_type(
 
 
 # Base class for all GEE connection objects
+# Since this is a connection port object, all nodes connected to this port use the same Python process.
+# Therefore, initializing the Google Earth Engine in the Google Earth Engine Connector node is enough.
+# Any stateful objects created there will be shared with all other nodes connected to it.
 class BaseGEEConnectionObject(ConnectionPortObject):
     """Base class for all GEE connection objects with shared credentials and project_id."""
 

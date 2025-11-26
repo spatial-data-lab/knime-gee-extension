@@ -316,13 +316,15 @@ class LabelPointsFromImage:
 
     label_band = knext.StringParameter(
         "Label Band",
-        "Band name containing class values in the reference image (e.g., 'landcover'). Leave empty to use first band.",
+        """Band name containing class values in the reference image (e.g., 'landcover'). Leave empty to use first band.
+        Available bands can be explored using the **EE Image Get Info** node.""",
         default_value="",
     )
 
     bands = knext.StringParameter(
         "Bands",
-        "Comma-separated list of band names to extract from feature image (e.g., 'B2,B3,B4,B8'). Leave empty to use all bands.",
+        """Comma-separated list of band names to extract from feature image (e.g., 'B2,B3,B4,B8'). 
+        Leave empty to use all bands. Available bands can be explored using the **EE Image Get Info** node.""",
         default_value="",
     )
 
@@ -508,11 +510,11 @@ class SampleRegionsForClassification:
 
     **Sampling Modes:**
 
-    1. **Polygon Mode** (default): Samples all pixels within training polygons
+    - **Polygon Mode** (default): Samples all pixels within training polygons
        - Input ports: FeatureCollection with labeled polygons (first port) + Image with spectral bands (second port)
        - Use when: You have manually drawn training polygons
 
-    2. **Point Mode**: Uses pre-generated points (random/stratified/field samples) with class labels
+    - **Point Mode**: Uses pre-generated points (random/stratified/field samples) with class labels
        - Input ports: FeatureCollection of labeled point samples (first port) + Image with spectral bands (second port)
        - Use when: You already have sample points with known class labels
 
@@ -556,7 +558,17 @@ class SampleRegionsForClassification:
 
     sampling_mode = knext.StringParameter(
         "Sampling Mode",
-        "Method for generating training samples",
+        """Method for generating training samples. 
+        Available modes:
+        
+        - **Polygon Mode** (default): Samples all pixels within training polygons. 
+        Input ports: FeatureCollection with labeled polygons (first port) + Image with spectral bands (second port). 
+        Use when: You have manually drawn training polygons
+
+        - **Point Mode**: Uses pre-generated points (random/stratified/field samples) with class labels. 
+        Input ports: FeatureCollection of labeled point samples (first port) + Image with spectral bands (second port). 
+        Use when: You already have sample points with known class labels
+        """,
         default_value="Polygon",
         enum=["Polygon", "Point"],
     )
@@ -569,7 +581,8 @@ class SampleRegionsForClassification:
 
     bands = knext.StringParameter(
         "Bands",
-        "Comma-separated list of band names to use for training (e.g., 'B2,B3,B4,B8' for Sentinel-2). Leave empty to use all bands.",
+        """Comma-separated list of band names to use for training (e.g., 'B2,B3,B4,B8' for Sentinel-2). 
+        Leave empty to use all bands. Available bands can be explored using the **EE Image Get Info** node.""",
         default_value="",
     )
 
@@ -726,7 +739,7 @@ class SampleRegionsForClassification:
 
 @knext.node(
     name="Random Forest Learner",
-    node_type=knext.NodeType.MANIPULATOR,
+    node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "RandomForest.png",
     id="randomforestlearner",
@@ -778,7 +791,7 @@ class RandomForestLearner:
     - Can handle large numbers of features/bands
 
     **Reference:**
-    https://developers.google.com/earth-engine/guides/classification
+    [Supervised Classification Guide](https://developers.google.com/earth-engine/guides/classification)
     """
 
     label_property = knext.StringParameter(
@@ -789,7 +802,9 @@ class RandomForestLearner:
 
     bands = knext.StringParameter(
         "Bands/Features",
-        "Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). Leave empty to use all properties except label.",
+        """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). 
+        Leave empty to use all properties except label. Available bands/features can be explored using the 
+        **EE Image Get Info** node.""",
         default_value="",
     )
 
@@ -995,7 +1010,7 @@ class RandomForestLearner:
 
 @knext.node(
     name="CART Learner",
-    node_type=knext.NodeType.MANIPULATOR,
+    node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "cart.png",
     id="cartlearner",
@@ -1046,7 +1061,7 @@ class CARTLearner:
     - Generally less accurate than ensemble methods
 
     **Reference:**
-    https://developers.google.com/earth-engine/guides/classification
+    [Supervised Classification Guide](https://developers.google.com/earth-engine/guides/classification)
     """
 
     label_property = knext.StringParameter(
@@ -1057,7 +1072,9 @@ class CARTLearner:
 
     bands = knext.StringParameter(
         "Bands/Features",
-        "Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). Leave empty to use all properties except label.",
+        """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8').
+        Leave empty to use all properties except label. Available bands/features can be explored using the 
+        **EE Image Get Info** node.""",
         default_value="",
     )
 
@@ -1223,7 +1240,7 @@ class CARTLearner:
 
 @knext.node(
     name="SVM Learner",
-    node_type=knext.NodeType.MANIPULATOR,
+    node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "SVM.png",
     id="svmlearner",
@@ -1272,7 +1289,7 @@ class SVMLearner:
     - Requires careful parameter tuning
 
     **Reference:**
-    https://developers.google.com/earth-engine/guides/classification
+    [Supervised Classification Guide](https://developers.google.com/earth-engine/guides/classification)
     """
 
     label_property = knext.StringParameter(
@@ -1283,7 +1300,9 @@ class SVMLearner:
 
     bands = knext.StringParameter(
         "Bands/Features",
-        "Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). Leave empty to use all properties except label.",
+        """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). 
+        Leave empty to use all properties except label. Available bands/features can be explored using the 
+        **EE Image Get Info** node.""",
         default_value="",
     )
 
@@ -1470,7 +1489,7 @@ class SVMLearner:
 
 @knext.node(
     name="Naive Bayes Learner",
-    node_type=knext.NodeType.MANIPULATOR,
+    node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "NaiveBayes.png",
     id="naivebayeslearner",
@@ -1531,7 +1550,7 @@ class NaiveBayesLearner:
     - Works best with discrete/categorical features
 
     **Reference:**
-    https://developers.google.com/earth-engine/guides/classification
+    [Supervised Classification Guide](https://developers.google.com/earth-engine/guides/classification)
     """
 
     label_property = knext.StringParameter(
@@ -1542,7 +1561,9 @@ class NaiveBayesLearner:
 
     bands = knext.StringParameter(
         "Bands/Features",
-        "Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). Leave empty to use all properties except label. ⚠️ Note: Features must be non-negative integers.",
+        """Comma-separated list of band/feature names to use for training (e.g., 'B2,B3,B4,B8'). 
+        Leave empty to use all properties except label. ⚠️ Note: Features must be non-negative integers. 
+        Available bands/features can be explored using the **EE Image Get Info** node.""",
         default_value="",
     )
 
@@ -1700,7 +1721,7 @@ class NaiveBayesLearner:
 
 @knext.node(
     name="Image Class Predictor",
-    node_type=knext.NodeType.MANIPULATOR,
+    node_type=knext.NodeType.PREDICTOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImagePredictor.png",
     id="imageclasspredictor",
@@ -1758,7 +1779,7 @@ class ImageClassPredictor:
     - Convert to Feature Collection for further analysis
 
     **Reference:**
-    https://developers.google.com/earth-engine/guides/classification
+    [Supervised Classification Guide](https://developers.google.com/earth-engine/guides/classification)
     """
 
     def configure(self, configure_context, input_schema1, input_schema2):
@@ -1850,7 +1871,7 @@ class ImageClassPredictor:
 
 @knext.node(
     name="Feature Collection Predictor",
-    node_type=knext.NodeType.MANIPULATOR,
+    node_type=knext.NodeType.PREDICTOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCpredictor.png",
     id="featurecollectionpredictor",
@@ -1914,7 +1935,7 @@ class FeatureCollectionPredictor:
     - System properties (e.g., 'system:index') are automatically excluded
 
     **Reference:**
-    https://developers.google.com/earth-engine/guides/classification
+    [Supervised Classification Guide](https://developers.google.com/earth-engine/guides/classification)
     """
 
     prediction_property = knext.StringParameter(
@@ -2018,7 +2039,7 @@ class FeatureCollectionPredictor:
 
 @knext.node(
     name="Classifier Scorer",
-    node_type=knext.NodeType.MANIPULATOR,
+    node_type=knext.NodeType.OTHER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "scorer.png",
     id="classifierscorer",
