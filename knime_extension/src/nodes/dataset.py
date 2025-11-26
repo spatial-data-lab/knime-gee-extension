@@ -44,13 +44,13 @@ class GEEHarmonizedSentinel2MSIData:
     """
 
     start_date = knext.StringParameter(
-        "Start Date",
+        "Start date",
         "The start date for the GEE Harmonized Sentinel-2 MSI Data",
         default_value="2024-01-01",
     )
 
     end_date = knext.StringParameter(
-        "End Date",
+        "End date",
         "The end date for the GEE Harmonized Sentinel-2 MSI Data",
         default_value="2024-03-20",
     )

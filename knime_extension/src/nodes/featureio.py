@@ -170,27 +170,27 @@ class GEEFeatureCollectionFilter:
 
     # Create operator dropdown parameter
     filter_operator = knext.StringParameter(
-        "Filter Operator",
+        "Filter operator",
         "The comparison operator to use for filtering.",
         default_value="Equals",
         enum=list(OPERATOR_CHOICES.keys()),
     )
 
     property_name = knext.StringParameter(
-        "Property Name",
+        "Property name",
         """Name of the property to filter by (e.g., 'ADM0_NAME'). To get a list of available properties, 
         use the "Feature Collection Info" node.""",
         default_value="",
     )
 
     property_value = knext.StringParameter(
-        "Property Value",
+        "Property value",
         "Value to filter by. For 'Is In List', use comma-separated values (e.g., 'China,Japan,India').",
         default_value="",
     )
 
     max_features = knext.IntParameter(
-        "Maximum Features",
+        "Maximum features",
         "Maximum number of features to return (-1 = no limit).",
         default_value=-1,
         min_value=-1,
@@ -416,7 +416,7 @@ class GEEFeatureCollectionSpatialFilter:
 
     # Create spatial operator dropdown
     spatial_operator = knext.StringParameter(
-        "Spatial Operator",
+        "Spatial operator",
         "The spatial relationship or operation to apply.",
         default_value="Intersects",
         enum=list(OPERATOR_CHOICES.keys()),
@@ -697,7 +697,7 @@ class FeatureCollectionToTable:
     """
 
     file_format = knext.StringParameter(
-        "Output Format",
+        "Output format",
         """Format for the output table. 
         **Output Formats:**
         
@@ -811,13 +811,13 @@ class GeoTableToFeatureCollection:
     """
 
     geo_col = knext.ColumnParameter(
-        "Geometry Column",
+        "Geometry column",
         "Column containing geometry data",
         port_index=0,
     )
 
     batch_size = knext.IntParameter(
-        "Batch Size",
+        "Batch size",
         "Number of features to process in each batch (smaller batches = safer but slower). Batch processing is automatically enabled for large tables.",
         default_value=500,
         min_value=50,
@@ -982,14 +982,14 @@ class FeatureCollectionExporter:
             return cls.CLOUD
 
     destination = knext.EnumParameter(
-        label="Destination Mode",
+        label="Destination mode",
         description="Select export destination. Drive requires interactive authentication with Drive scope.",
         default_value=DestinationModeOptions.get_default().name,
         enum=DestinationModeOptions,
     )
 
     export_format = knext.StringParameter(
-        "Export Format",
+        "Export format",
         """Format for the exported file. Available formats:
         
         - ``CSV`` → Creates a single ``.csv`` file (geometry as WKT).
@@ -1004,19 +1004,19 @@ class FeatureCollectionExporter:
     )
 
     export_path = knext.StringParameter(
-        "Destination Path",
+        "Destination path",
         "Destination path (Drive: 'DriveFolder/file'; Cloud Storage: 'bucket/path/file').",
         default_value="EEexport/feature_collection_export",
     )
 
     wait_for_completion = knext.BoolParameter(
-        "Wait for Completion",
+        "Wait for completion",
         "If enabled, the node waits until the export task completes.",
         default_value=False,
     )
 
     max_wait_seconds = knext.IntParameter(
-        "Max Wait Seconds",
+        "Max wait seconds",
         "Maximum number of seconds to wait when waiting is enabled.",
         default_value=600,
         min_value=1,
@@ -1199,7 +1199,7 @@ class CloudStorageToTable:
     """
 
     cloud_path = knext.StringParameter(
-        "Cloud Storage Path",
+        "Cloud Storage path",
         "Path to the file in Google Cloud Storage (e.g., 'bucket/path/file.csv').",
         default_value="",
     )

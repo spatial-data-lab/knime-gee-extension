@@ -482,7 +482,7 @@ class LocalGeoTableReducer:
     """
 
     geo_col = knext.ColumnParameter(
-        "Geometry Column",
+        "Geometry column",
         "Column containing geometry data",
         column_filter=knut.is_geo,
         include_row_key=False,
@@ -491,7 +491,7 @@ class LocalGeoTableReducer:
     )
 
     reducer_methods = knext.StringParameter(
-        "Reducer Methods",
+        "Reducer methods",
         """Comma-separated list of reduction methods (e.g., 'mean,min,max'). 
         Supported methods:
         
@@ -506,7 +506,7 @@ class LocalGeoTableReducer:
     )
 
     image_scale = knext.IntParameter(
-        "Image Scale (meters)",
+        "Image scale (meters)",
         "The scale in meters for zonal statistics calculation",
         default_value=1000,
         min_value=1,
@@ -514,13 +514,13 @@ class LocalGeoTableReducer:
     )
 
     batch_boolean = knext.BoolParameter(
-        "Enable Batch Processing",
+        "Enable batch processing",
         "Enable batch processing for large datasets",
         default_value=False,
     )
 
     batch_size = knext.IntParameter(
-        "Batch Size",
+        "Batch size",
         "Number of features to process in each batch",
         default_value=100,
         min_value=1,
@@ -707,7 +707,7 @@ class ReduceRegions:
     """
 
     reducer_methods = knext.StringParameter(
-        "Reducer Methods",
+        "Reducer methods",
         """Comma-separated list of reduction methods (e.g., 'mean,min,max,stdDev'). 
         Supported methods:
         
@@ -732,7 +732,7 @@ class ReduceRegions:
     )
 
     tile_scale = knext.DoubleParameter(
-        "Tile Scale",
+        "Tile scale",
         "Tile scale for performance optimization (1.0 = default, higher = faster but less precise)",
         default_value=1.0,
         min_value=0.1,
@@ -895,13 +895,13 @@ class CountByClass:
     """
 
     auto_detect_classes = knext.BoolParameter(
-        "Auto-detect All Classes",
+        "Auto-detect all classes",
         "Automatically detect all unique class codes from the image",
         default_value=True,
     )
 
     category_codes = knext.StringParameter(
-        "Class Codes",
+        "Class codes",
         "Comma-separated list of class codes to count (e.g., '1,2,3,4,5'). Only used when auto-detect is disabled.",
         default_value="1,2,3",
     ).rule(knext.OneOf(auto_detect_classes, [False]), knext.Effect.SHOW)
@@ -915,7 +915,7 @@ class CountByClass:
     )
 
     tile_scale = knext.DoubleParameter(
-        "Tile Scale",
+        "Tile scale",
         "Tile scale for performance optimization (1.0 = default, higher = faster but less precise)",
         default_value=1.0,
         min_value=0.1,
@@ -924,7 +924,7 @@ class CountByClass:
     )
 
     max_pixels = knext.IntParameter(
-        "Max Pixels",
+        "Max pixels",
         "Maximum number of pixels Earth Engine is allowed to read during the class count (integer ≤ 2,147,483,647).",
         default_value=1000000000,
         min_value=1,

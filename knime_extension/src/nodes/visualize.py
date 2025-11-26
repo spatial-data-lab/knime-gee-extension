@@ -74,7 +74,7 @@ class ViewNodeGEEMap:
     """
 
     color_palette = knext.StringParameter(
-        "Color Palette",
+        "Color palette",
         """Comma-separated color codes for gradient. Supports hex codes with or without # prefix.
                 
         Common gradient combinations:
@@ -103,21 +103,21 @@ class ViewNodeGEEMap:
     )
     # Single band parameters (for manual override)
     auto_stats = knext.BoolParameter(
-        "Auto Statistics",
+        "Auto statistics",
         "Automatically calculate min/max values from non-zero pixels",
         default_value=True,
         is_advanced=True,
     )
 
     min_value = knext.DoubleParameter(
-        "Minimum Value",
+        "Minimum value",
         "Minimum value for color mapping (ignored if auto statistics is enabled)",
         default_value=0.0,
         is_advanced=True,
     ).rule(knext.OneOf(auto_stats, [False]), knext.Effect.SHOW)
 
     max_value = knext.DoubleParameter(
-        "Maximum Value",
+        "Maximum value",
         "Maximum value for color mapping (ignored if auto statistics is enabled)",
         default_value=0.3,
         is_advanced=True,
@@ -125,7 +125,7 @@ class ViewNodeGEEMap:
 
     # Base map options
     base_map = knext.StringParameter(
-        "Base Map",
+        "Base map",
         "Base map layer for visualization",
         default_value="OpenStreetMap",
         enum=["OpenStreetMap", "Satellite", "Terrain", "Hybrid"],
@@ -294,13 +294,13 @@ class ViewNodeGEEFeatureCollection:
 
     # Feature collection visualization parameters
     color_column = knext.StringParameter(
-        "Color Column",
+        "Color column",
         "Column name to use for coloring features (leave empty for uniform color)",
         default_value="",
     )
 
     color_palette = knext.StringParameter(
-        "Fill Color Palette",
+        "Fill color palette",
         """Comma-separated color codes for feature coloring. Supports hex codes with or without # prefix.
         
         Common color combinations:
@@ -318,7 +318,7 @@ class ViewNodeGEEFeatureCollection:
     )
 
     fill_opacity = knext.DoubleParameter(
-        "Fill Opacity",
+        "Fill opacity",
         "Opacity of the fill color (0.0 = transparent, 1.0 = opaque)",
         default_value=0.3,
         min_value=0.0,
@@ -326,13 +326,13 @@ class ViewNodeGEEFeatureCollection:
     )
 
     stroke_color = knext.StringParameter(
-        "Stroke Color",
+        "Stroke color",
         "Hex color code for polygon/line stroke (e.g., '000000' or '#000000')",
         default_value="000000",
     )
 
     stroke_width = knext.IntParameter(
-        "Stroke Width",
+        "Stroke width",
         "Width of the stroke line in pixels",
         default_value=2,
         min_value=1,
@@ -340,7 +340,7 @@ class ViewNodeGEEFeatureCollection:
     )
 
     stroke_opacity = knext.DoubleParameter(
-        "Stroke Opacity",
+        "Stroke opacity",
         "Opacity of the stroke color (0.0 = transparent, 1.0 = opaque)",
         default_value=1.0,
         min_value=0.0,
@@ -348,7 +348,7 @@ class ViewNodeGEEFeatureCollection:
     )
 
     point_radius = knext.IntParameter(
-        "Point Radius",
+        "Point radius",
         "Radius of point features in pixels",
         default_value=5,
         min_value=1,
@@ -356,7 +356,7 @@ class ViewNodeGEEFeatureCollection:
     )
 
     num_classes = knext.IntParameter(
-        "Number of Classes",
+        "Number of classes",
         "Number of color classes for classification (auto-adjusts for discrete values)",
         default_value=5,
         min_value=3,
@@ -365,7 +365,7 @@ class ViewNodeGEEFeatureCollection:
 
     # Base map options
     base_map = knext.StringParameter(
-        "Base Map",
+        "Base map",
         "Base map layer for visualization",
         default_value="OpenStreetMap",
         enum=["OpenStreetMap", "Satellite", "Terrain", "Hybrid"],

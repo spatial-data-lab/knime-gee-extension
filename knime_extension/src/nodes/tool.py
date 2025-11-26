@@ -85,13 +85,13 @@ class ImageResampleReproject:
     """
 
     target_projection = knext.StringParameter(
-        "Target Projection (EPSG)",
+        "Target projection (EPSG)",
         "Target coordinate system EPSG code (e.g., 'EPSG:4326' for WGS84, 'EPSG:32633' for UTM 33N)",
         default_value="EPSG:4326",
     )
 
     target_scale = knext.IntParameter(
-        "Target Scale (meters)",
+        "Target scale (meters)",
         "Target pixel size in meters (e.g., 10 for Sentinel-2, 30 for Landsat)",
         default_value=30,
         min_value=1,
@@ -99,7 +99,7 @@ class ImageResampleReproject:
     )
 
     resampling_method = knext.StringParameter(
-        "Resampling Method",
+        "Resampling method",
         "Method for resampling pixels during reprojection",
         default_value="bilinear",
         enum=["nearest", "bilinear", "bicubic"],
@@ -200,14 +200,14 @@ class RasterCalculatorIndices:
     """
 
     calculation_mode = knext.StringParameter(
-        "Calculation Mode",
+        "Calculation mode",
         "Choose between pre-defined indices or custom expression",
         default_value="predefined",
         enum=["predefined", "custom"],
     )
 
     predefined_index = knext.StringParameter(
-        "Pre-defined Index",
+        "Pre-defined index",
         "Select a pre-defined vegetation or water index",
         default_value="NDVI",
         enum=[
@@ -223,13 +223,13 @@ class RasterCalculatorIndices:
     ).rule(knext.OneOf(calculation_mode, ["predefined"]), knext.Effect.SHOW)
 
     custom_expression = knext.StringParameter(
-        "Custom Expression",
+        "Custom expression",
         "Mathematical expression using band names (e.g., '(B8 - B4) / (B8 + B4)')",
         default_value="(B8 - B4) / (B8 + B4)",
     ).rule(knext.OneOf(calculation_mode, ["custom"]), knext.Effect.SHOW)
 
     output_band_name = knext.StringParameter(
-        "Output Band Name",
+        "Output band name",
         "Name for the calculated index band",
         default_value="index",
     )
@@ -422,14 +422,14 @@ class TemporalCompositeReducer:
     """
 
     composite_method = knext.StringParameter(
-        "Composite Method",
+        "Composite method",
         "Method for combining images over time",
         default_value="median",
         enum=["median", "mean", "qualityMosaic", "percentile", "min", "max", "stdDev"],
     )
 
     percentile_value = knext.IntParameter(
-        "Percentile Value",
+        "Percentile value",
         "Percentile value for percentile method (0-100)",
         default_value=90,
         min_value=0,
@@ -437,7 +437,7 @@ class TemporalCompositeReducer:
     ).rule(knext.OneOf(composite_method, ["percentile"]), knext.Effect.SHOW)
 
     time_window = knext.StringParameter(
-        "Time Window",
+        "Time window",
         "Time window for creating composites",
         default_value="monthly",
         enum=["daily", "weekly", "monthly", "seasonal", "annual"],
@@ -451,7 +451,7 @@ class TemporalCompositeReducer:
     )
 
     quality_band = knext.StringParameter(
-        "Quality Band",
+        "Quality band",
         "Quality band name for quality mosaic (e.g., 'pixel_qa', 'radsat_qa')",
         default_value="pixel_qa",
     ).rule(knext.OneOf(composite_method, ["qualityMosaic"]), knext.Effect.SHOW)
@@ -635,7 +635,7 @@ class SampleRegionsForML:
     """
 
     label_property = knext.StringParameter(
-        "Label Property",
+        "Label property",
         "Property name containing class labels in the training polygons",
         default_value="class",
     )
@@ -649,7 +649,7 @@ class SampleRegionsForML:
     )
 
     tile_scale = knext.DoubleParameter(
-        "Tile Scale",
+        "Tile scale",
         "Tile scale for performance optimization (1.0 = default, higher = faster)",
         default_value=1.0,
         min_value=0.1,
@@ -657,13 +657,13 @@ class SampleRegionsForML:
     )
 
     class_balance = knext.BoolParameter(
-        "Enable Class Balancing",
+        "Enable class balancing",
         "Automatically balance samples across all classes",
         default_value=True,
     )
 
     stratified = knext.BoolParameter(
-        "Stratified Sampling",
+        "Stratified sampling",
         "Use stratified sampling for representative results",
         default_value=False,
     )
@@ -836,14 +836,14 @@ class TrainClassifier:
     )
 
     label_column = knext.ColumnParameter(
-        "Label Column",
+        "Label column",
         "Column containing class labels",
         port_index=0,
     )
 
     # Random Forest parameters
     num_trees = knext.IntParameter(
-        "Number of Trees",
+        "Number of trees",
         "Number of trees in the random forest",
         default_value=100,
         min_value=10,
@@ -852,7 +852,7 @@ class TrainClassifier:
 
     # CART parameters
     max_nodes = knext.IntParameter(
-        "Max Nodes",
+        "Max nodes",
         "Maximum number of nodes in the decision tree",
         default_value=10000,
         min_value=100,
@@ -861,7 +861,7 @@ class TrainClassifier:
 
     # SVM parameters
     kernel_type = knext.StringParameter(
-        "Kernel Type",
+        "Kernel type",
         "Kernel type for SVM",
         default_value="RBF",
         enum=["RBF", "Linear", "Polynomial"],
@@ -985,14 +985,14 @@ class ClassifyImage:
     """
 
     output_mode = knext.StringParameter(
-        "Output Mode",
+        "Output mode",
         "Type of classification output",
         default_value="class_map",
         enum=["class_map", "probability_map", "confidence_map"],
     )
 
     confidence_threshold = knext.DoubleParameter(
-        "Confidence Threshold",
+        "Confidence threshold",
         "Minimum confidence for classification (0.0-1.0)",
         default_value=0.5,
         min_value=0.0,
@@ -1087,7 +1087,7 @@ class KMeansClustering:
     """
 
     num_clusters = knext.IntParameter(
-        "Number of Clusters",
+        "Number of clusters",
         "Number of clusters (K) for K-means algorithm",
         default_value=5,
         min_value=2,
@@ -1095,7 +1095,7 @@ class KMeansClustering:
     )
 
     max_iterations = knext.IntParameter(
-        "Max Iterations",
+        "Max iterations",
         "Maximum number of iterations",
         default_value=10,
         min_value=1,
@@ -1103,7 +1103,7 @@ class KMeansClustering:
     )
 
     random_seed = knext.IntParameter(
-        "Random Seed",
+        "Random seed",
         "Random seed for reproducible results",
         default_value=42,
         min_value=0,
@@ -1222,14 +1222,14 @@ class FocalOperations:
     """
 
     focal_method = knext.StringParameter(
-        "Focal Method",
+        "Focal method",
         "Type of focal operation to perform",
         default_value="mean",
         enum=["mean", "median", "min", "max", "stdDev", "sum"],
     )
 
     kernel_size = knext.IntParameter(
-        "Kernel Size",
+        "Kernel size",
         "Size of the focal kernel (pixels)",
         default_value=3,
         min_value=3,
@@ -1237,7 +1237,7 @@ class FocalOperations:
     )
 
     kernel_type = knext.StringParameter(
-        "Kernel Type",
+        "Kernel type",
         "Shape of the focal kernel",
         default_value="square",
         enum=["square", "circle", "cross"],

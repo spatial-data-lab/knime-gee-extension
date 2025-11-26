@@ -68,7 +68,7 @@ class ImageReader:
     """
 
     imagename = knext.StringParameter(
-        "Image Name",
+        "Image name",
         """The name/ID of the GEE image to load (e.g., 'USGS/SRTMGL1_003')
         You can use the GEE Dataset Search node to find available images or 
         visit [GEE Datasets Catalog](https://developers.google.com/earth-engine/datasets/catalog).
@@ -413,14 +413,14 @@ class ImageExporter:
             return cls.CLOUD
 
     destination = knext.EnumParameter(
-        label="Destination Mode",
+        label="Destination mode",
         description="Choose between exporting to Google Drive or Google Cloud Storage.",
         default_value=DestinationModeOptions.get_default().name,
         enum=DestinationModeOptions,
     )
 
     drive_path = knext.StringParameter(
-        "Drive Path",
+        "Drive path",
         "Drive folder and file name, e.g., 'EEexport/my_image.tiff'.",
         default_value="EEexport/export.tiff",
     ).rule(
@@ -429,7 +429,7 @@ class ImageExporter:
     )
 
     cloud_object_path = knext.StringParameter(
-        "Cloud Storage Object",
+        "Cloud storage path",
         "Bucket and object path, e.g., 'my-bucket/folder/my_image.tif'.",
         default_value="bucket/export.tif",
     ).rule(
@@ -446,13 +446,13 @@ class ImageExporter:
     )
 
     wait_for_completion = knext.BoolParameter(
-        "Wait for Download Completion",
+        "Wait for download completion",
         "If enabled, the node will wait until the export finishes before completing.",
         default_value=True,
     )
 
     max_pixels = knext.IntParameter(
-        "Max Pixels",
+        "Max pixels",
         "Maximum number of pixels Earth Engine is allowed to read during export (integer ≤ 2,147,483,647).",
         default_value=1000000000,
         min_value=1,
@@ -460,7 +460,7 @@ class ImageExporter:
     )
 
     max_wait_seconds = knext.IntParameter(
-        "Max Wait Seconds",
+        "Max wait seconds",
         "Maximum number of seconds to wait for completion when waiting is enabled.",
         default_value=600,
         min_value=1,
@@ -735,7 +735,7 @@ class GeoTiffToGEEImage:
     """
 
     cloud_tiff_path = knext.StringParameter(
-        "Cloud Storage GeoTIFF Path",
+        "Cloud storage GeoTIFF path",
         "Path to the GeoTIFF in Google Cloud Storage (e.g., 'my-bucket/folder/file.tif').",
         default_value="",
     )
@@ -822,7 +822,7 @@ class ImageValueFilter:
     """
 
     band_name = knext.StringParameter(
-        "Band Name",
+        "Band name",
         "Name of the band to evaluate (must exist in the image).",
         default_value="",
     )
@@ -841,7 +841,7 @@ class ImageValueFilter:
     )
 
     retain_values = knext.BoolParameter(
-        "Retain Original Values",
+        "Retain original values",
         "If enabled the original pixel value is kept; otherwise filtered pixels are set to 1.",
         default_value=False,
     )
@@ -929,13 +929,13 @@ class PixelsToFeatureCollection:
     """
 
     band_name = knext.StringParameter(
-        "Band Name",
+        "Band name",
         "Name of the band to vectorize. Available bands can be explored using the **EE Image Get Info** node.",
         default_value="",
     )
 
     scale = knext.IntParameter(
-        "Vectorization Scale (meters)",
+        "Vectorization scale (meters)",
         "Resolution in meters to use when tracing polygons.",
         default_value=30,
         min_value=1,
@@ -943,7 +943,7 @@ class PixelsToFeatureCollection:
     )
 
     max_pixels = knext.IntParameter(
-        "Max Pixels",
+        "Max pixels",
         "Maximum number of pixels Earth Engine is allowed to process during vectorization (integer ≤ 2,147,483,647).",
         default_value=1000000000,
         min_value=1,
@@ -951,13 +951,13 @@ class PixelsToFeatureCollection:
     )
 
     apply_union = knext.BoolParameter(
-        "Apply Unary Union",
+        "Apply unary union",
         "If enabled, the resulting polygons are dissolved into a single MultiPolygon feature.",
         default_value=True,
     )
 
     union_error_margin = knext.DoubleParameter(
-        "Union Error Margin (meters)",
+        "Union error margin (meters)",
         "Error margin used when dissolving polygons (only when union is enabled).",
         default_value=1.0,
         min_value=0.1,

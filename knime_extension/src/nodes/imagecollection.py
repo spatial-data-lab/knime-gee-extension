@@ -78,7 +78,7 @@ class GEEDatasetSearch:
     """
 
     search_keyword = knext.StringParameter(
-        "Search Keyword",
+        "Search keyword",
         "The keyword to search from GEE data catalog (e.g., 'Sentinel-2', 'elevation', 'SRTM')",
         default_value="Sentinel-2",
     )
@@ -96,8 +96,10 @@ class GEEDatasetSearch:
     )
 
     use_regex = knext.BoolParameter(
-        "Use Regular Expression",
-        "Use regular expression for advanced pattern matching",
+        "Use regular expression",
+        """Use regular expression for advanced pattern matching. 
+        For more details about regular expression, 
+        see the [Wikipedia article](https://en.wikipedia.org/wiki/Regular_expression).""",
         default_value=False,
     )
 
@@ -278,13 +280,13 @@ class ImageCollectionGeneralFilter:
 
     # Date filtering
     enable_date_filter = knext.BoolParameter(
-        "Enable Date Filter",
+        "Enable date filter",
         "Enable filtering by date range",
         default_value=True,
     )
 
     start_date = knext.DateTimeParameter(
-        "Start Date",
+        "Start date",
         "Start date for filtering the image collection",
         default_value="2020-01-01",
         show_date=True,
@@ -292,7 +294,7 @@ class ImageCollectionGeneralFilter:
     ).rule(knext.OneOf(enable_date_filter, [True]), knext.Effect.SHOW)
 
     end_date = knext.DateTimeParameter(
-        "End Date",
+        "End date",
         "End date for filtering the image collection",
         default_value="2024-12-31",
         show_date=True,
@@ -301,20 +303,20 @@ class ImageCollectionGeneralFilter:
 
     # Cloud filtering
     enable_cloud_filter = knext.BoolParameter(
-        "Enable Cloud Filter",
+        "Enable cloud filter",
         "Enable filtering by cloud cover percentage",
         default_value=False,
     )
 
     cloud_property_mode = knext.StringParameter(
-        "Cloud Property Mode",
+        "Cloud property mode",
         "Select the cloud property name based on your satellite collection",
         default_value="Sentinel-2",
         enum=["Sentinel-2", "Landsat", "Custom"],
     ).rule(knext.OneOf(enable_cloud_filter, [True]), knext.Effect.SHOW)
 
     cloud_property_custom = knext.StringParameter(
-        "Custom Cloud Property",
+        "Custom cloud property",
         "Custom cloud property name (only for Custom mode)",
         default_value="CLOUD_COVER",
     ).rule(
@@ -326,7 +328,7 @@ class ImageCollectionGeneralFilter:
     )
 
     max_cloud_cover = knext.DoubleParameter(
-        "Maximum Cloud Cover (%)",
+        "Maximum cloud cover (%)",
         "Maximum cloud cover percentage (0-100)",
         default_value=20.0,
         min_value=0.0,
@@ -335,31 +337,31 @@ class ImageCollectionGeneralFilter:
 
     # Sort and limit
     enable_sort = knext.BoolParameter(
-        "Enable Sorting",
+        "Enable sorting",
         "Enable sorting by property",
         default_value=False,
     )
 
     sort_property = knext.StringParameter(
-        "Sort Property",
+        "Sort property",
         "Property to sort by (e.g., 'system:time_start' for chronological order)",
         default_value="system:time_start",
     ).rule(knext.OneOf(enable_sort, [True]), knext.Effect.SHOW)
 
     sort_ascending = knext.BoolParameter(
-        "Sort Ascending",
+        "Sort ascending",
         "Sort in ascending order (oldest first for dates)",
         default_value=True,
     ).rule(knext.OneOf(enable_sort, [True]), knext.Effect.SHOW)
 
     enable_limit = knext.BoolParameter(
-        "Enable Limit",
+        "Enable limit",
         "Limit the number of images returned",
         default_value=False,
     )
 
     max_images = knext.IntParameter(
-        "Maximum Images",
+        "Maximum images",
         "Maximum number of images to return",
         default_value=100,
         min_value=1,
@@ -726,7 +728,7 @@ class ImageCollectionSpatialFilter:
     """
 
     filter_bounds = knext.BoolParameter(
-        "Filter by Bounds",
+        "Filter by bounds",
         "Filter images to only those intersecting the ROI",
         default_value=True,
     )
@@ -844,7 +846,7 @@ class ImageCollectionAggregator:
     """
 
     aggregation_method = knext.StringParameter(
-        "Aggregation Method",
+        "Aggregation method",
         """Method to aggregate multiple images into one. 
         Available methods:
         

@@ -315,7 +315,7 @@ class LabelPointsFromImage:
     """
 
     label_band = knext.StringParameter(
-        "Label Band",
+        "Label band",
         """Band name containing class values in the reference image (e.g., 'landcover'). Leave empty to use first band.
         Available bands can be explored using the **EE Image Get Info** node.""",
         default_value="",
@@ -337,7 +337,7 @@ class LabelPointsFromImage:
     )
 
     num_pixels = knext.IntParameter(
-        "Number of Pixels",
+        "Number of pixels",
         "Number of random sample points to generate",
         default_value=5000,
         min_value=100,
@@ -345,7 +345,7 @@ class LabelPointsFromImage:
     )
 
     seed = knext.IntParameter(
-        "Random Seed",
+        "Random seed",
         "Random seed for reproducible sampling",
         default_value=0,
         min_value=0,
@@ -557,7 +557,7 @@ class SampleRegionsForClassification:
     """
 
     sampling_mode = knext.StringParameter(
-        "Sampling Mode",
+        "Sampling mode",
         """Method for generating training samples. 
         Available modes:
         
@@ -574,7 +574,7 @@ class SampleRegionsForClassification:
     )
 
     label_property = knext.StringParameter(
-        "Label Property",
+        "Label property",
         "Property name containing class labels in the training Feature Collection (e.g., 'class', 'LC', 'landcover').",
         default_value="class",
     )
@@ -595,7 +595,7 @@ class SampleRegionsForClassification:
     )
 
     tile_scale = knext.DoubleParameter(
-        "Tile Scale",
+        "Tile scale",
         "Tile scale for performance optimization (1.0 = default, higher = faster for large areas)",
         default_value=1.0,
         min_value=0.1,
@@ -795,7 +795,7 @@ class RandomForestLearner:
     """
 
     label_property = knext.StringParameter(
-        "Label Property",
+        "Label property",
         "Property name containing class labels in the training FeatureCollection (e.g., 'class', 'landcover')",
         default_value="class",
     )
@@ -809,7 +809,7 @@ class RandomForestLearner:
     )
 
     number_of_trees = knext.IntParameter(
-        "Number of Trees",
+        "Number of trees",
         "Number of decision trees in the random forest ensemble",
         default_value=100,
         min_value=10,
@@ -817,7 +817,7 @@ class RandomForestLearner:
     )
 
     variables_per_split = knext.IntParameter(
-        "Variables per Split",
+        "Variables per split",
         "Number of variables to consider at each split (default: sqrt of total features). Set to 0 for auto.",
         default_value=0,
         min_value=0,
@@ -826,7 +826,7 @@ class RandomForestLearner:
     )
 
     min_leaf_population = knext.IntParameter(
-        "Min Leaf Population",
+        "Min leaf population",
         "Minimum number of samples required in a leaf node",
         default_value=1,
         min_value=1,
@@ -835,7 +835,7 @@ class RandomForestLearner:
     )
 
     bag_fraction = knext.DoubleParameter(
-        "Bag Fraction",
+        "Bag fraction",
         "Fraction of samples to use for training each tree (0.0-1.0)",
         default_value=0.5,
         min_value=0.1,
@@ -844,7 +844,7 @@ class RandomForestLearner:
     )
 
     max_nodes = knext.IntParameter(
-        "Max Nodes",
+        "Max nodes",
         "Maximum number of nodes per tree (0 = unlimited). Use to limit model size.",
         default_value=0,
         min_value=0,
@@ -1065,7 +1065,7 @@ class CARTLearner:
     """
 
     label_property = knext.StringParameter(
-        "Label Property",
+        "Label property",
         "Property name containing class labels in the training FeatureCollection (e.g., 'class', 'landcover')",
         default_value="class",
     )
@@ -1079,7 +1079,7 @@ class CARTLearner:
     )
 
     max_nodes = knext.IntParameter(
-        "Max Nodes",
+        "Max nodes",
         "Maximum number of nodes in the decision tree",
         default_value=10000,
         min_value=100,
@@ -1087,7 +1087,7 @@ class CARTLearner:
     )
 
     min_leaf_population = knext.IntParameter(
-        "Min Leaf Population",
+        "Min leaf population",
         "Minimum number of samples required in a leaf node",
         default_value=1,
         min_value=1,
@@ -1293,7 +1293,7 @@ class SVMLearner:
     """
 
     label_property = knext.StringParameter(
-        "Label Property",
+        "Label property",
         "Property name containing class labels in the training FeatureCollection (e.g., 'class', 'landcover')",
         default_value="class",
     )
@@ -1307,7 +1307,7 @@ class SVMLearner:
     )
 
     kernel_type = knext.StringParameter(
-        "Kernel Type",
+        "Kernel type",
         "Type of kernel function for SVM",
         default_value="RBF",
         enum=["RBF", "Linear", "Polynomial"],
@@ -1554,7 +1554,7 @@ class NaiveBayesLearner:
     """
 
     label_property = knext.StringParameter(
-        "Label Property",
+        "Label property",
         "Property name containing class labels in the training FeatureCollection (e.g., 'class', 'landcover')",
         default_value="class",
     )
@@ -1939,7 +1939,7 @@ class FeatureCollectionPredictor:
     """
 
     prediction_property = knext.StringParameter(
-        "Prediction Property Name",
+        "Prediction property name",
         "Name of the property to store prediction results (default: 'classification').",
         default_value="classification",
     )
@@ -2092,7 +2092,7 @@ class ClassifierScorer:
     """
 
     label_property = knext.StringParameter(
-        "Label Property",
+        "Label property",
         "Name of the property containing class labels (e.g., 'landcover', 'LC'). Must match the label property used during training.",
         default_value="landcover",
     )

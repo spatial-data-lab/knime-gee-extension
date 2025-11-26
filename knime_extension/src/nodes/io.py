@@ -45,7 +45,7 @@ class SearchDataFromGEEDataCatalogNode:
     """
 
     search_keyword = knext.StringParameter(
-        label="Search Keyword",
+        label="Search keyword",
         description="The keyword to search from GEE data catalog.",
         default_value="SRTMGL1_003",
     )
@@ -64,8 +64,10 @@ class SearchDataFromGEEDataCatalogNode:
     )
 
     if_regex = knext.BoolParameter(
-        label="Use Regular Expression",
-        description="The flag to use regular expression to search from GEE data catalog.",
+        label="Use regular expression",
+        description="""Use regular expression to search from GEE data catalog.
+        For more details about regular expression, 
+        see the [Wikipedia article](https://en.wikipedia.org/wiki/Regular_expression).""",
         default_value=False,
     )
 
@@ -126,7 +128,7 @@ class GEEImage:
     """
 
     data_set_id = knext.StringParameter(
-        "Data Set ID",
+        "Data set ID",
         "The data set ID for the GEE Image",
         default_value="LANDSAT/LE7_TOA_5YEAR/1999_2003",
     )
@@ -187,7 +189,7 @@ class GEEFeatureCollection:
     """
 
     data_set_id = knext.StringParameter(
-        "Data Set ID",
+        "Data set ID",
         "The data set ID for the GEE Feature Collection",
         default_value="TIGER/2018/States",
     )
@@ -238,7 +240,7 @@ class LocalShapefileToGEEFeatureCollection:
     """
 
     local_shapefile = knext.StringParameter(
-        "Local Shapefile",
+        "Local shapefile",
         "The local shapefile path",
         default_value="",
     )
@@ -289,7 +291,7 @@ class ExportImage:
     """
 
     output_path = knext.StringParameter(
-        "Output Path",
+        "Output path",
         "The path to export the image",
         default_value="export_image",
     )
@@ -339,7 +341,7 @@ class ExportFeatureCollection:
     """
 
     output_path = knext.StringParameter(
-        "Output Path",
+        "Output path",
         "The path to export the feature collection",
         default_value="export_feature_collection.shp",
     )
@@ -480,7 +482,7 @@ class LocalTiffToGEEImage:
     """
 
     local_tiff = knext.StringParameter(
-        "Local Tiff",
+        "Local tiff",
         "The local tiff path",
         default_value="",
     )
