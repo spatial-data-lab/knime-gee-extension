@@ -35,7 +35,7 @@ __NODE_ICON_PATH = "icons/icon/image/"
     name="GEE Image Constant Creator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "ImageConstantCreator.png",
+    icon_path=__NODE_ICON_PATH + "constantImage.png",
     id="imageconstantcreator",
     after="",
 )
@@ -917,7 +917,7 @@ class ImageClip:
     name="GEE Image Boundary to Geometry",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "ImageGeometryToFC.png",
+    icon_path=__NODE_ICON_PATH + "imageBoundary.png",
     id="imagegeometrytofc",
     after="imageclip",
 )
@@ -1559,7 +1559,7 @@ class ConditionalOperatorOptions(knext.EnumParameterOptions):
     name="GEE Image Conditional Assignment",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
-    icon_path=__NODE_ICON_PATH + "ImageConditionalAssignment.png",
+    icon_path=__NODE_ICON_PATH + "imageWhere.png",
     id="imageconditionalassignment",
     after="imagevaluefilter",
 )
