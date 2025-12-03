@@ -81,9 +81,26 @@ class ImageReader:
 
     def execute(self, exec_context: knext.ExecutionContext, gee_connection):
         import ee
+        import logging
 
-        image = ee.Image(self.imagename)
+        LOGGER = logging.getLogger(__name__)
 
+        # Validate image name
+        imagename = (self.imagename or "").strip()
+        if not imagename:
+            raise ValueError(
+                "Image name cannot be empty. Please provide a valid GEE image ID "
+            )
+        try:
+            image = ee.Image(imagename)
+        except Exception as e:
+            LOGGER.error(f"Failed to load image '{imagename}': {e}")
+            raise ValueError(
+                f"Failed to load image '{imagename}'. Please verify the image ID is correct. "
+                f"Error: {str(e)}"
+            ) from e
+
+        LOGGER.warning(f"Successfully loaded image: {imagename}")
         return knut.export_gee_image_connection(image, gee_connection)
 
 
@@ -196,6 +213,10 @@ class ImageBandSelector:
     description="GEE Image connection with embedded image object.",
     port_type=gee_image_port_type,
 )
+@knext.output_table(
+    name="Image Info Table",
+    description="Table containing image information as JSON for use in automated workflows",
+)
 @knext.output_view(
     name="Image Info View",
     description="HTML view showing detailed image information",
@@ -230,6 +251,7 @@ class ImageGetInfo:
         import ee
         import json
         import logging
+        import pandas as pd
 
         LOGGER = logging.getLogger(__name__)
 
@@ -253,19 +275,24 @@ class ImageGetInfo:
             </div>
             """
 
+            # Create table with JSON cell for automated workflows
+            df = pd.DataFrame([{"image_info_json": json_string}])
+
             LOGGER.warning("Successfully retrieved image information")
-            return knext.view_html(html)
+            return knext.Table.from_pandas(df), knext.view_html(html)
 
         except Exception as e:
             LOGGER.error(f"Failed to get image info: {e}")
-            # Return error view
+            # Return error view and empty table
             error_html = f"""
             <div style="color: red; font-family: monospace;">
                 <h3>Error</h3>
                 <p>Failed to retrieve image information: {str(e)}</p>
             </div>
             """
-            return knext.view_html(error_html)
+            # Return empty table with error message
+            df = pd.DataFrame([{"image_info_json": json.dumps({"error": str(e)})}])
+            return knext.Table.from_pandas(df), knext.view_html(error_html)
 
 
 ############################################
