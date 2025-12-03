@@ -27,6 +27,28 @@ __NODE_ICON_PATH = "icons/icon/sampling/"
 
 
 ############################################
+# Reducer Method Options
+############################################
+
+
+class ReducerMethodOptions(knext.EnumParameterOptions):
+    """Options for reducer methods in zonal statistics calculations."""
+
+    MEAN = ("Mean", "Average value within each region/geometry")
+    MEDIAN = ("Median", "Median value (robust to outliers)")
+    MIN = ("Min", "Minimum value within each region/geometry")
+    MAX = ("Max", "Maximum value within each region/geometry")
+    COUNT = ("Count", "Number of valid pixels")
+    SUM = ("Sum", "Sum of all pixel values")
+    STDDEV = ("StdDev", "Standard deviation")
+    VARIANCE = ("Variance", "Statistical variance")
+
+    @classmethod
+    def get_default(cls):
+        return [cls.MEAN.name]
+
+
+############################################
 # Get Image Value by LatLon
 ############################################
 
@@ -490,19 +512,21 @@ class LocalGeoTableReducer:
         port_index=0,
     )
 
-    reducer_methods = knext.StringParameter(
+    reducer_methods = knext.EnumSetParameter(
         "Reducer methods",
-        """Comma-separated list of reduction methods (e.g., 'mean,min,max'). 
+        """Select one or more reduction methods to calculate zonal statistics.
+        
         Supported methods:
         
-        - **mean**: Average value within each geometry
-        - **median**: Median value (robust to outliers)
-        - **min/max**: Minimum/maximum values
-        - **count**: Number of valid pixels
-        - **sum**: Sum of all pixel values
-        - **stdDev**: Standard deviation
-        - **variance**: Statistical variance""",
-        default_value="mean",
+        - **Mean**: Average value within each geometry
+        - **Median**: Median value (robust to outliers)
+        - **Min/Max**: Minimum/maximum values
+        - **Count**: Number of valid pixels
+        - **Sum**: Sum of all pixel values
+        - **StdDev**: Standard deviation
+        - **Variance**: Statistical variance""",
+        default_value=ReducerMethodOptions.get_default(),
+        enum=ReducerMethodOptions,
     )
 
     image_scale = knext.IntParameter(
@@ -563,8 +587,9 @@ class LocalGeoTableReducer:
             "variance": ee.Reducer.variance(),
         }
 
-        # Split the reducelist and create a combined reducer
-        reduce_methods = [method.strip() for method in self.reducer_methods.split(",")]
+        # EnumSetParameter returns a list of option names (e.g., ["MEAN", "MIN"])
+        # Convert to lowercase to match reducer_map keys
+        reduce_methods = [method.lower() for method in self.reducer_methods]
 
         # Validate reducer methods
         valid_methods = []
@@ -706,21 +731,23 @@ class ReduceRegions:
     - Combine multiple statistics in one operation
     """
 
-    reducer_methods = knext.StringParameter(
+    reducer_methods = knext.EnumSetParameter(
         "Reducer methods",
-        """Comma-separated list of reduction methods (e.g., 'mean,min,max,stdDev'). 
+        """Select one or more reduction methods to calculate zonal statistics.
+        
         Supported methods:
         
-        - **mean**: Average value within each region
-        - **median**: Median value (robust to outliers)
-        - **min/max**: Minimum/maximum values
-        - **count**: Number of valid pixels
-        - **sum**: Sum of all pixel values
-        - **stdDev**: Standard deviation
-        - **variance**: Statistical variance
-        - **percentile**: Custom percentile values
-        """,
-        default_value="mean",
+        - **Mean**: Average value within each region
+        - **Median**: Median value (robust to outliers)
+        - **Min/Max**: Minimum/maximum values
+        - **Count**: Number of valid pixels
+        - **Sum**: Sum of all pixel values
+        - **StdDev**: Standard deviation
+        - **Variance**: Statistical variance
+        
+        Note: Percentile is not currently supported via EnumSetParameter.""",
+        default_value=ReducerMethodOptions.get_default(),
+        enum=ReducerMethodOptions,
     )
 
     scale = knext.IntParameter(
@@ -760,10 +787,9 @@ class ReduceRegions:
             image = image_connection.image
             feature_collection = fc_connection.feature_collection
 
-            # Parse reducer methods
-            reduce_methods = [
-                method.strip() for method in self.reducer_methods.split(",")
-            ]
+            # EnumSetParameter returns a list of option names (e.g., ["MEAN", "MIN"])
+            # Convert to lowercase to match reducer_map keys
+            reduce_methods = [method.lower() for method in self.reducer_methods]
 
             # Create combined reducer
             reducers = self._create_combined_reducer(reduce_methods)
