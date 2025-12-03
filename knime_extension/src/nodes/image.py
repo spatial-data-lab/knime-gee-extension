@@ -196,6 +196,452 @@ class ImageBandSelector:
 
 
 ############################################
+# Image Band Renamer
+############################################
+
+
+@knext.node(
+    name="GEE Image Band Renamer",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "bandrenamer.png",
+    id="bandrenamer",
+    after="bandselector",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with bands to rename.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with renamed bands.",
+    port_type=gee_image_port_type,
+)
+class ImageBandRenamer:
+    """Renames bands in a Google Earth Engine image.
+
+    This node allows you to rename bands in an image, which is essential for
+    organizing multi-temporal data and preparing bands for merging.
+
+    **Use Cases:**
+
+    - Rename bands to reflect time periods (e.g., 'stable_lights' → '2003')
+    - Standardize band names across different images
+    - Prepare bands for multi-temporal analysis
+
+    **Examples:**
+
+    - Rename single band: 'stable_lights' → '2003'
+    - Rename multiple bands: 'B1,B2,B3' → 'Red,Green,Blue'
+
+    **Note:** Number of new names must match number of bands to rename.
+    If bands_to_rename is empty, all bands will be renamed.
+    """
+
+    bands_to_rename = knext.StringParameter(
+        "Bands to rename",
+        """Comma-separated list of band names to rename (e.g., 'stable_lights' or 'B1,B2,B3').
+        Leave empty to rename all bands. If empty, new names must match total number of bands.""",
+        default_value="",
+    )
+
+    new_names = knext.StringParameter(
+        "New band names",
+        """Comma-separated list of new names (e.g., '2003' or 'Red,Green,Blue').
+        Number of names must match number of bands to rename.""",
+        default_value="",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        image = image_connection.image
+
+        try:
+            # Get all band names
+            all_bands = image.bandNames().getInfo()
+
+            # Determine which bands to rename
+            if self.bands_to_rename.strip():
+                bands_to_rename_list = [
+                    b.strip() for b in self.bands_to_rename.split(",") if b.strip()
+                ]
+                # Validate bands exist
+                missing_bands = [b for b in bands_to_rename_list if b not in all_bands]
+                if missing_bands:
+                    raise ValueError(f"Bands not found in image: {missing_bands}")
+                bands_to_process = bands_to_rename_list
+            else:
+                # Rename all bands
+                bands_to_process = all_bands
+
+            # Get new names
+            if not self.new_names.strip():
+                raise ValueError("New band names must be provided")
+
+            new_names_list = [n.strip() for n in self.new_names.split(",") if n.strip()]
+
+            # Validate counts match
+            if len(new_names_list) != len(bands_to_process):
+                raise ValueError(
+                    f"Number of new names ({len(new_names_list)}) must match "
+                    f"number of bands to rename ({len(bands_to_process)})"
+                )
+
+            # Rename bands - start with first band
+            renamed_image = image.select([bands_to_process[0]]).rename(
+                new_names_list[0]
+            )
+
+            # Add remaining renamed bands
+            for old_name, new_name in zip(bands_to_process[1:], new_names_list[1:]):
+                renamed_band = image.select([old_name]).rename(new_name)
+                renamed_image = renamed_image.addBands(renamed_band)
+
+            # Add any bands that weren't renamed
+            other_bands = [b for b in all_bands if b not in bands_to_process]
+            if other_bands:
+                other_image = image.select(other_bands)
+                renamed_image = other_image.addBands(renamed_image)
+
+            # Get final band names for logging
+            final_bands = renamed_image.bandNames().getInfo()
+            LOGGER.warning(
+                f"Successfully renamed bands. Original: {bands_to_process}, "
+                f"New: {new_names_list}, Final bands: {final_bands}"
+            )
+
+            return knut.export_gee_image_connection(renamed_image, image_connection)
+
+        except Exception as e:
+            LOGGER.error(f"Failed to rename bands: {e}")
+            raise
+
+
+############################################
+# Image Band Merger
+############################################
+
+
+@knext.node(
+    name="GEE Image Band Merger",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "bandmerger.png",
+    id="bandmerger",
+    after="bandrenamer",
+)
+@knext.input_port(
+    name="Base Image",
+    description="Base image to add bands to. This will be the first image in the merged result.",
+    port_type=gee_image_port_type,
+)
+@knext.input_port(
+    name="Additional Image",
+    description="Image containing bands to add to the base image.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with merged bands from both input images.",
+    port_type=gee_image_port_type,
+)
+class ImageBandMerger:
+    """Merges bands from two images into a single image.
+
+    This node combines bands from two images using Google Earth Engine's
+    addBands() method. You can chain multiple Band Merger nodes to merge
+    more than two images.
+
+    **Use Cases:**
+
+    - Combine multi-temporal data (e.g., nighttime lights from different years)
+    - Stack bands from different sources or time periods
+    - Create time series stacks for change detection
+    - Merge computed indices with original imagery
+
+    **Examples:**
+
+    - Merge 1993, 2003, 2013 nighttime lights:
+      First merge: 2013 (base) + 2003 (additional) → merged_2013_2003
+      Second merge: merged_2013_2003 (base) + 1993 (additional) → final merged image
+    - Combine NDVI calculations with original spectral bands
+
+    **Workflow Pattern:**
+
+    1. Use **Band Selector** to select desired bands from each image
+    2. Use **Band Renamer** to rename bands (e.g., 'stable_lights' → '2003')
+    3. Use **Band Merger** to combine images (chain multiple nodes for 3+ images)
+    """
+
+    overwrite = knext.BoolParameter(
+        "Overwrite existing bands",
+        "If True, overwrite bands with the same name. If False, keep both bands (second one gets suffix).",
+        default_value=False,
+    )
+
+    def configure(self, configure_context, base_image_schema, additional_image_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        base_image_connection,
+        additional_image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        base_image = base_image_connection.image
+
+        try:
+            # Get band names from both images for logging
+            base_bands = base_image.bandNames().getInfo()
+            additional_image = additional_image_connection.image
+            additional_bands = additional_image.bandNames().getInfo()
+
+            # Add bands from additional image to base image
+            merged_image = base_image.addBands(
+                additional_image, overwrite=self.overwrite
+            )
+
+            # Get final band names
+            final_bands = merged_image.bandNames().getInfo()
+            LOGGER.warning(
+                f"Successfully merged images. Base bands: {base_bands}, "
+                f"Additional bands: {additional_bands}, Final bands: {final_bands}"
+            )
+
+            return knut.export_gee_image_connection(merged_image, base_image_connection)
+
+        except Exception as e:
+            LOGGER.error(f"Failed to merge image bands: {e}")
+            raise
+
+
+############################################
+# Image Band Calculator
+############################################
+
+
+class BandOperationOptions(knext.EnumParameterOptions):
+    """Options for band calculation operations."""
+
+    ADDITION = ("Addition", "B1 + B2: Add two bands together")
+    SUBTRACTION = ("Subtraction", "B1 - B2 or B2 - B1: Subtract one band from another")
+    MULTIPLICATION = ("Multiplication", "B1 * B2: Multiply two bands")
+    DIVISION = ("Division", "B1 / B2 or B2 / B1: Divide one band by another")
+    NORMALIZED_DIFFERENCE = (
+        "Normalized Difference",
+        "(B1 - B2) / (B1 + B2): Commonly used for indices like NDVI, NDWI",
+    )
+    POWER = ("Power", "B1 ^ B2 or B2 ^ B1: Raise one band to the power of another")
+    MAXIMUM = ("Maximum", "max(B1, B2): Maximum value of the two bands")
+    MINIMUM = ("Minimum", "min(B1, B2): Minimum value of the two bands")
+    MEAN = ("Mean", "(B1 + B2) / 2: Average of the two bands")
+
+    @classmethod
+    def get_default(cls):
+        return cls.NORMALIZED_DIFFERENCE
+
+
+@knext.node(
+    name="GEE Image Band Calculator",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "bandcalculator.png",
+    id="bandcalculator",
+    after="bandmerger",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with bands to calculate from.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with calculated band added.",
+    port_type=gee_image_port_type,
+)
+class ImageBandCalculator:
+    """Performs mathematical operations between two bands and adds the result as a new band.
+
+    This node performs basic mathematical operations between two bands of the same image
+    and adds the calculated result as a new band. This is useful for creating custom
+    indices, ratios, and band combinations.
+
+    **Supported Operations:**
+
+    - **Addition (+):** B1 + B2
+    - **Subtraction (-):** B1 - B2 or B2 - B1
+    - **Multiplication (*):** B1 * B2
+    - **Division (/):** B1 / B2 or B2 / B1
+    - **Normalized Difference:** (B1 - B2) / (B1 + B2) - commonly used for indices like NDVI
+    - **Power (^):** B1 ^ B2 or B2 ^ B1
+    - **Maximum:** max(B1, B2)
+    - **Minimum:** min(B1, B2)
+    - **Mean:** (B1 + B2) / 2
+
+    **Common Use Cases:**
+
+    - Calculate custom vegetation indices
+    - Create band ratios (e.g., NIR/Red ratio)
+    - Compute band differences for change detection
+    - Generate composite indices for classification
+
+    **Examples:**
+
+    - NDVI-like calculation: bands="B8,B4", operation="Normalized Difference", output="ndvi"
+    - NIR/Red ratio: bands="B8,B4", operation="Division" (B8/B4), output="nir_red_ratio"
+    - Band difference: bands="B8,B4", operation="Subtraction" (B8-B4), output="nir_red_diff"
+    """
+
+    bands = knext.StringParameter(
+        "Bands",
+        "Comma-separated list of exactly 2 band names (e.g., 'B8,B4'). The order matters for subtraction and division.",
+        default_value="B8,B4",
+    )
+
+    operation = knext.EnumParameter(
+        label="Operation",
+        description="Mathematical operation to perform between the two bands",
+        default_value=BandOperationOptions.get_default().name,
+        enum=BandOperationOptions,
+    )
+
+    reverse_order = knext.BoolParameter(
+        "Reverse band order",
+        "For subtraction, division, and power: if False, uses B1 - B2, B1 / B2, or B1 ^ B2; if True, uses B2 - B1, B2 / B1, or B2 ^ B1. Ignored for other operations.",
+        default_value=False,
+    ).rule(
+        knext.OneOf(
+            operation,
+            [
+                BandOperationOptions.SUBTRACTION.name,
+                BandOperationOptions.DIVISION.name,
+                BandOperationOptions.POWER.name,
+            ],
+        ),
+        knext.Effect.SHOW,
+    )
+
+    output_band_name = knext.StringParameter(
+        "Output band name",
+        "Name for the calculated band that will be added to the image",
+        default_value="calculated_band",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get image from connection
+        image = image_connection.image
+
+        # Parse band names
+        band_list = [b.strip() for b in self.bands.split(",") if b.strip()]
+
+        # Validate exactly 2 bands
+        if len(band_list) != 2:
+            raise ValueError(
+                f"Exactly 2 bands are required. Found {len(band_list)}: {band_list}"
+            )
+
+        band1_name, band2_name = band_list[0], band_list[1]
+
+        # Get available bands
+        available_bands = image.bandNames().getInfo()
+
+        # Validate bands exist
+        if band1_name not in available_bands:
+            raise ValueError(
+                f"Band '{band1_name}' not found in image. Available bands: {available_bands}"
+            )
+        if band2_name not in available_bands:
+            raise ValueError(
+                f"Band '{band2_name}' not found in image. Available bands: {available_bands}"
+            )
+
+        # Select the two bands
+        band1 = image.select(band1_name)
+        band2 = image.select(band2_name)
+
+        # Perform calculation based on operation
+        try:
+            operation_name = self.operation
+
+            if operation_name == BandOperationOptions.ADDITION.name:
+                result = band1.add(band2)
+            elif operation_name == BandOperationOptions.SUBTRACTION.name:
+                if self.reverse_order:
+                    result = band2.subtract(band1)
+                else:
+                    result = band1.subtract(band2)
+            elif operation_name == BandOperationOptions.MULTIPLICATION.name:
+                result = band1.multiply(band2)
+            elif operation_name == BandOperationOptions.DIVISION.name:
+                if self.reverse_order:
+                    result = band2.divide(band1)
+                else:
+                    result = band1.divide(band2)
+            elif operation_name == BandOperationOptions.NORMALIZED_DIFFERENCE.name:
+                # Always use (B1 - B2) / (B1 + B2)
+                result = image.normalizedDifference([band1_name, band2_name])
+            elif operation_name == BandOperationOptions.POWER.name:
+                if self.reverse_order:
+                    result = band2.pow(band1)
+                else:
+                    result = band1.pow(band2)
+            elif operation_name == BandOperationOptions.MAXIMUM.name:
+                result = band1.max(band2)
+            elif operation_name == BandOperationOptions.MINIMUM.name:
+                result = band1.min(band2)
+            elif operation_name == BandOperationOptions.MEAN.name:
+                result = band1.add(band2).divide(2.0)
+            else:
+                raise ValueError(f"Unknown operation: {operation_name}")
+
+            # Rename the result band
+            result = result.rename(self.output_band_name)
+
+            # Add the calculated band to the original image
+            final_image = image.addBands(result)
+
+            LOGGER.warning(
+                f"Successfully calculated {self.output_band_name} using "
+                f"{band1_name} {operation_name} {band2_name}"
+            )
+
+            return knut.export_gee_image_connection(final_image, image_connection)
+
+        except Exception as e:
+            LOGGER.error(f"Band calculation failed: {e}")
+            raise
+
+
+############################################
 # Image Get Info
 ############################################
 
