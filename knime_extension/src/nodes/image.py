@@ -27,6 +27,87 @@ __NODE_ICON_PATH = "icons/icon/image/"
 
 
 ############################################
+# GEE Image Constant Creator
+############################################
+
+
+@knext.node(
+    name="GEE Image Constant Creator",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageConstantCreator.png",
+    id="imageconstantcreator",
+    after="",
+)
+@knext.input_port(
+    name="Reference Image",
+    description="Reference image to define the geometry. The constant image will be clipped to this image's geometry.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with constant value image clipped to reference geometry.",
+    port_type=gee_image_port_type,
+)
+class ImageConstantCreator:
+    """Creates a constant image with a specified value, clipped to a reference image's geometry.
+
+    This node creates a Google Earth Engine image where all pixels have the same constant value,
+    automatically clipped to match the geometry of the reference image. This is more efficient than
+    creating a global constant image and avoids the need for a separate clip operation.
+
+    **Use Cases:**
+
+    - Create base images for conditional operations (e.g., `.where()` operations)
+    - Initialize classification images with default values
+    - Create mask templates for further processing
+    - Generate reference images for comparison
+
+    **Common Use Case:**
+
+    - Create a constant image with value 1, matching the geometry of a reference image (e.g., NDVI image)
+    - Then use **Conditional Assignment** node to assign different values based on conditions
+    - Initialize a classification image before applying classification rules
+
+    """
+
+    constant_value = knext.DoubleParameter(
+        "Constant value",
+        "The constant value for all pixels in the image.",
+        default_value=1.0,
+    )
+
+    band_name = knext.StringParameter(
+        "Band name",
+        "Name for the output band of the constant image.",
+        default_value="constant",
+    )
+
+    def configure(self, configure_context, reference_image_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        reference_image_connection,
+    ):
+        import ee
+
+        # Get reference image and its geometry
+        reference_image = reference_image_connection.image
+        geometry = reference_image.geometry()
+
+        # Create constant image and clip to reference geometry
+        constant_image = ee.Image(self.constant_value).rename(self.band_name)
+        constant_image = constant_image.clip(geometry)
+
+        # Use reference_image_connection to get credentials and project_id
+        return knut.export_gee_image_connection(
+            constant_image, reference_image_connection
+        )
+
+
+############################################
 # GEE Image Reader
 ############################################
 
@@ -828,6 +909,89 @@ class ImageClip:
 
 
 ############################################
+# Image Geometry to Feature Collection
+############################################
+
+
+@knext.node(
+    name="GEE Image Boundary to Geometry",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageGeometryToFC.png",
+    id="imagegeometrytofc",
+    after="imageclip",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection to extract geometry from.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection containing the image geometry as a single feature.",
+    port_type=gee_feature_collection_port_type,
+)
+class ImageGeometry:
+    """Extracts the geometry from an image and creates a Feature Collection.
+
+    This node extracts the bounding geometry from a Google Earth Engine image using
+    `image.geometry()` and wraps it into a Feature Collection with a single feature.
+    This is useful for using image boundaries in operations that require Feature Collections,
+    such as clipping other images to the same extent.
+
+    **Use Cases:**
+
+    - Convert image geometry to Feature Collection for use with Image Clip node
+    - Create ROI boundaries from image extents
+    - Use image boundaries in spatial filtering operations
+    - Prepare geometry for other Feature Collection operations
+
+    **Example Workflow:**
+
+    - Extract geometry from reference image: Image → This node → Feature Collection
+    - Use for clipping: Constant Image → Image Clip (using FC from this node) → Clipped Image
+
+    """
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get image from connection
+        image = image_connection.image
+
+        try:
+            # Extract geometry from image
+            geometry = image.geometry()
+
+            # Create a single feature with the geometry
+            feature = ee.Feature(geometry, {"source": "image_geometry"})
+
+            # Create Feature Collection with single feature
+            feature_collection = ee.FeatureCollection([feature])
+
+            LOGGER.warning(
+                "Successfully extracted image geometry to Feature Collection"
+            )
+            return knut.export_gee_feature_collection_connection(
+                feature_collection, image_connection
+            )
+
+        except Exception as e:
+            LOGGER.error(f"Failed to extract image geometry: {e}")
+            raise
+
+
+############################################
 # Image Exporter
 ############################################
 
@@ -1369,6 +1533,180 @@ class ImageValueFilter:
         )
 
         return knut.export_gee_image_connection(filtered_image, image_connection)
+
+
+############################################
+# Image Conditional Assignment (Where)
+############################################
+
+
+class ConditionalOperatorOptions(knext.EnumParameterOptions):
+    """Options for conditional comparison operators."""
+
+    GTE = (">=", "Greater than or equal to (≥)")
+    GT = (">", "Greater than (>)")
+    LTE = ("<=", "Less than or equal to (≤)")
+    LT = ("<", "Less than (<)")
+    EQ = ("==", "Equal to (==)")
+    NEQ = ("!=", "Not equal to (!=)")
+
+    @classmethod
+    def get_default(cls):
+        return cls.GTE
+
+
+@knext.node(
+    name="GEE Image Conditional Assignment",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageConditionalAssignment.png",
+    id="imageconditionalassignment",
+    after="imagevaluefilter",
+)
+@knext.input_port(
+    name="Base Image",
+    description="The image to modify (where conditions will be applied).",
+    port_type=gee_image_port_type,
+)
+@knext.input_port(
+    name="Condition Image",
+    description="The image used to generate conditions (e.g., NDVI image for threshold comparisons).",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with conditionally assigned values.",
+    port_type=gee_image_port_type,
+)
+class ImageConditionalAssignment:
+    """Applies conditional value assignment using `.where()` operation.
+
+    This node implements Google Earth Engine's `.where()` functionality, which conditionally
+    replaces pixel values in the base image based on conditions derived from another image.
+    When a condition is true, pixels in the base image are replaced with a specified value.
+
+    **Operation:**
+
+    - **Base Image**: The image to modify (where assignments will be applied)
+    - **Condition Image**: The image used to generate boolean conditions
+    - **Condition**: Band name from condition image + operator + threshold
+    - **Replacement Value**: The value to assign when condition is true
+
+    **Use Cases:**
+
+    - Classify pixels based on thresholds (e.g., NDVI-based classification)
+    - Create multi-class maps from continuous data
+    - Apply conditional rules for land cover mapping
+    - Replace specific pixel values based on conditions
+
+    **Common Use Case:**
+
+    - Create classification image: Start with constant image (value=1), then apply multiple
+      `.where()` operations to assign different class values based on conditions
+    - Water/Non-water classification: Where NDWI > threshold → set to 1, else 0
+    """
+
+    condition_band = knext.StringParameter(
+        "Condition band name",
+        "Name of the band from condition image to use for comparison (e.g., 'ndvi', 'B4').",
+        default_value="",
+    )
+
+    operator = knext.EnumParameter(
+        label="Operator",
+        description="Comparison operator for the condition",
+        default_value=ConditionalOperatorOptions.get_default().name,
+        enum=ConditionalOperatorOptions,
+    )
+
+    threshold = knext.DoubleParameter(
+        "Threshold",
+        "Threshold value for comparison.",
+        default_value=0.0,
+    )
+
+    replacement_value = knext.DoubleParameter(
+        "Replacement value",
+        "Value to assign to base image pixels where condition is true.",
+        default_value=0.0,
+    )
+
+    def configure(self, configure_context, base_image_schema, condition_image_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        base_image_connection,
+        condition_image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get images from connections
+        base_image = base_image_connection.image
+        condition_image = condition_image_connection.image
+
+        # Validate condition band
+        condition_band = (self.condition_band or "").strip()
+        if not condition_band:
+            raise ValueError(
+                "Condition band name is required for Conditional Assignment."
+            )
+
+        try:
+            # Get available bands from condition image
+            available_bands = condition_image.bandNames().getInfo()
+            if condition_band not in available_bands:
+                raise ValueError(
+                    f"Band '{condition_band}' not found in condition image. Available bands: {available_bands}"
+                )
+
+            # Select the condition band
+            condition_band_image = condition_image.select(condition_band)
+
+            # Create condition based on operator
+            operator_name = self.operator
+            threshold_ee = ee.Number(self.threshold)
+            replacement_value_ee = ee.Number(self.replacement_value)
+
+            # Build condition image (boolean) and get operator symbol for logging
+            operator_symbol = None
+            if operator_name == ConditionalOperatorOptions.GTE.name:
+                condition = condition_band_image.gte(threshold_ee)
+                operator_symbol = ">="
+            elif operator_name == ConditionalOperatorOptions.GT.name:
+                condition = condition_band_image.gt(threshold_ee)
+                operator_symbol = ">"
+            elif operator_name == ConditionalOperatorOptions.LTE.name:
+                condition = condition_band_image.lte(threshold_ee)
+                operator_symbol = "<="
+            elif operator_name == ConditionalOperatorOptions.LT.name:
+                condition = condition_band_image.lt(threshold_ee)
+                operator_symbol = "<"
+            elif operator_name == ConditionalOperatorOptions.EQ.name:
+                condition = condition_band_image.eq(threshold_ee)
+                operator_symbol = "=="
+            elif operator_name == ConditionalOperatorOptions.NEQ.name:
+                condition = condition_band_image.neq(threshold_ee)
+                operator_symbol = "!="
+            else:
+                raise ValueError(f"Unknown operator: {operator_name}")
+
+            # Apply .where() operation: base_image.where(condition, replacement_value)
+            result_image = base_image.where(condition, replacement_value_ee)
+
+            LOGGER.warning(
+                f"Applied conditional assignment: where {condition_band} {operator_symbol} {self.threshold}, set to {self.replacement_value}"
+            )
+
+            return knut.export_gee_image_connection(result_image, base_image_connection)
+
+        except Exception as e:
+            LOGGER.error(f"Conditional assignment failed: {e}")
+            raise
 
 
 ############################################
