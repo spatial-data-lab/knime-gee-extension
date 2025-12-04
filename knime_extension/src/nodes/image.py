@@ -1536,6 +1536,124 @@ class ImageValueFilter:
 
 
 ############################################
+# Image Mask Apply
+############################################
+
+
+@knext.node(
+    name="GEE Image Mask Apply",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "imageMask.png",
+    id="imagemaskapply",
+    after="imagevaluefilter",
+)
+@knext.input_port(
+    name="Base Image",
+    description="The image to apply the mask to.",
+    port_type=gee_image_port_type,
+)
+@knext.input_port(
+    name="Mask Image",
+    description="The mask image. Non-zero pixels in the mask will be retained; zero pixels will be masked out.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with mask applied.",
+    port_type=gee_image_port_type,
+)
+class ImageMaskApply:
+    """Applies a mask to an image using `.updateMask()` operation.
+
+    This node implements Google Earth Engine's `.updateMask()` functionality, which masks out
+    pixels in the base image where the mask image has zero values. Non-zero values in the mask
+    image indicate pixels that should be retained.
+
+    **Operation:**
+
+    - **Base Image**: The image to mask
+    - **Mask Image**: The image used as a mask (typically a boolean or binary image)
+    - **Mask Band**: The band from mask image to use (if mask has multiple bands)
+    - Result: Base image with pixels masked where mask band equals 0
+
+    **Use Cases:**
+
+    - Apply boolean masks created from threshold operations
+    - Combine multiple masks (e.g., vegetation mask AND cloud mask)
+    - Filter image based on classification results
+    - Remove unwanted pixels based on criteria
+
+    **Common Workflow:**
+
+    1. Create boolean mask: Use **Image Value Filter** to create a boolean mask (e.g., NDVI > 0.5)
+    2. Extract mask: Use **Image Value Filter** again to extract specific values (e.g., mask == 1)
+    3. Apply mask: Use **Image Mask Apply** to apply the mask to the original image
+
+    """
+
+    mask_band = knext.StringParameter(
+        "Mask band name",
+        "Name of the band from mask image to use as mask. Leave empty to use the first band if mask image has multiple bands.",
+        default_value="",
+    )
+
+    def configure(self, configure_context, base_image_schema, mask_image_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        base_image_connection,
+        mask_image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get images from connections
+        base_image = base_image_connection.image
+        mask_image = mask_image_connection.image
+
+        try:
+            # Get available bands from mask image
+            available_bands = mask_image.bandNames().getInfo()
+
+            # Select mask band
+            mask_band = (self.mask_band or "").strip()
+            if mask_band:
+                # User specified a band
+                if mask_band not in available_bands:
+                    raise ValueError(
+                        f"Mask band '{mask_band}' not found in mask image. Available bands: {available_bands}"
+                    )
+                mask_band_image = mask_image.select(mask_band)
+            else:
+                # Use first band if no band specified
+                if len(available_bands) > 1:
+                    LOGGER.warning(
+                        f"Mask image has multiple bands {available_bands}. Using first band '{available_bands[0]}'. "
+                        "Specify 'Mask band name' to select a different band."
+                    )
+                mask_band_image = mask_image.select(available_bands[0])
+
+            # Apply mask: pixels where mask is non-zero are retained, zero pixels are masked out
+            # In GEE, updateMask expects non-zero values to be kept, zero values to be masked
+            masked_image = base_image.updateMask(mask_band_image)
+
+            LOGGER.warning(
+                f"Applied mask to base image using band '{mask_band or available_bands[0]}' from mask image"
+            )
+
+            return knut.export_gee_image_connection(masked_image, base_image_connection)
+
+        except Exception as e:
+            LOGGER.error(f"Mask application failed: {e}")
+            raise
+
+
+############################################
 # Image Conditional Assignment (Where)
 ############################################
 
