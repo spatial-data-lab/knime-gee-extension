@@ -22,8 +22,3 @@ import nodes.sampling
 import nodes.supervise
 
 # import nodes.tool
-# import nodes.cluster
-# import nodes.classifier
-# import nodes.io
-# import nodes.manipulator
-# import nodes.dataset
