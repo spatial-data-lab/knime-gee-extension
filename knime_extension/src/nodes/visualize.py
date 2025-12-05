@@ -47,10 +47,19 @@ class ViewNodeGEEMap:
 
     This node will visualize the given GEE Image on a map using the [geemap](https://geemap.org/) library.
     This view is highly interactive and allows you to change various aspects of the view within the visualization itself.
+
+    **Band Selection:**
+    - Specify which bands to visualize (e.g., 'B4,B3,B2' for RGB)
+    - Leave empty to auto-use first 3 bands for RGB or first band for single-band
+    - Common RGB combinations:
+      - Landsat: 'B4,B3,B2' (True Color)
+      - Sentinel-2: 'B4,B3,B2' (True Color)
+      - False Color: 'B8,B4,B3' (Sentinel-2 vegetation)
+
     This node provides two visualization modes for GEE Images:
 
-    1. **Single Band Mode**: For images with 1-2 bands, displays the first band with color mapping
-    2. **RGB Mode**: For images with 3+ bands, automatically combines the first 3 bands as RGB
+    1. **Single Band Mode**: For 1-2 selected bands, displays the first band with color mapping
+    2. **RGB Mode**: For 3+ selected bands, uses first 3 bands as RGB channels
 
     **Visualization Features**:
     - **Auto Statistics**: Automatically calculates min/max values from non-zero pixels for optimal visualization
@@ -64,15 +73,27 @@ class ViewNodeGEEMap:
     - **Base Maps**: Choose from OpenStreetMap, Satellite, Terrain, or Hybrid backgrounds
 
     **Usage**:
-    - For single-band data: The node automatically uses the first band with color mapping
-
-    - For multi-band data: The node automatically uses the first 3 bands as RGB channels
-
+    - Specify bands to visualize (e.g., 'B4,B3,B2' for RGB visualization)
+    - Leave bands empty to auto-use first available bands
     - Enable "Auto Statistics" to let the node calculate optimal visualization ranges
-
     - Disable "Auto Statistics" to manually set min/max values for precise control
 
     """
+
+    bands = knext.StringParameter(
+        "Bands to visualize",
+        """Comma-separated list of band names to visualize (e.g., 'B4,B3,B2').
+        For RGB visualization, provide 3 bands (Red, Green, Blue order).
+        For single-band visualization, provide 1 band.
+        Leave empty to auto-use first 3 bands (RGB) or first band (single-band).
+        
+        Common combinations:
+        - Landsat True Color: 'B4,B3,B2'
+        - Sentinel-2 True Color: 'B4,B3,B2'
+        - False Color Vegetation: 'B8,B4,B3' (Sentinel-2)
+        - SWIR: 'B12,B8,B4' (Sentinel-2)""",
+        default_value="",
+    )
 
     color_palette = knext.StringParameter(
         "Color palette",
@@ -147,12 +168,38 @@ class ViewNodeGEEMap:
         # No need to initialize GEE - it's already initialized in the same Python process!
         image = image_connection.image
 
-        # Get band names efficiently without full image info
-        band_names = image.bandNames().getInfo()
+        # Get all available band names
+        all_band_names = image.bandNames().getInfo()
 
-        # Auto-detect display mode based on number of bands
+        # Determine which bands to use
+        if self.bands and self.bands.strip():
+            # User specified bands
+            requested_bands = [b.strip() for b in self.bands.split(",") if b.strip()]
+            # Validate bands exist
+            available_requested = [b for b in requested_bands if b in all_band_names]
+            missing_bands = [b for b in requested_bands if b not in all_band_names]
+            if missing_bands:
+                LOGGER.warning(
+                    f"Some requested bands not found: {missing_bands}. Available bands: {all_band_names}"
+                )
+            if not available_requested:
+                raise ValueError(
+                    f"None of the requested bands found in image. Available bands: {all_band_names}"
+                )
+            selected_bands = available_requested
+        else:
+            # Auto-use first available bands (default behavior)
+            selected_bands = (
+                all_band_names[:3] if len(all_band_names) >= 3 else all_band_names
+            )
+
+        # Select only the requested bands
+        image = image.select(selected_bands)
+        band_names = selected_bands
+
+        # Auto-detect display mode based on number of selected bands
         if len(band_names) >= 3:
-            # RGB mode - automatically use first 3 bands
+            # RGB mode - use first 3 selected bands
             red_band = band_names[0]
             green_band = band_names[1]
             blue_band = band_names[2]
@@ -228,7 +275,7 @@ class ViewNodeGEEMap:
             # LOGGER.warning(f"RGB mode: {red_band}, {green_band}, {blue_band}, range: {min_val}-{max_val}")
 
         else:
-            # Single band mode - use first available band
+            # Single band mode - use first selected band
             single_band = band_names[0] if band_names else "B1"
 
             # Parse color palette and ensure all colors have # prefix

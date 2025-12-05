@@ -436,6 +436,7 @@ class LabelPointsFromImage:
                 properties=[label_band],  # Preserve label from reference image
                 scale=self.scale,
                 tileScale=1.0,
+                geometries=True,  # Preserve geometry for GeoDataFrame conversion
             )
 
             # Get point count
@@ -650,6 +651,7 @@ class SampleRegionsForClassification:
                     properties=[self.label_property],
                     scale=self.scale,
                     tileScale=self.tile_scale,
+                    geometries=True,  # Preserve geometry for GeoDataFrame conversion
                 )
 
                 # Get sample count for logging
@@ -713,6 +715,7 @@ class SampleRegionsForClassification:
                     properties=[label_prop],
                     scale=self.scale,
                     tileScale=self.tile_scale,
+                    geometries=True,  # Preserve geometry for GeoDataFrame conversion
                 )
 
                 try:

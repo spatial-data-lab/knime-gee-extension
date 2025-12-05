@@ -1,6 +1,6 @@
 group_id: sdl.harvard
 name: gee # Will be concatenated with the group_id to an ID
-author: Lingbo Liu,Tobias Koetter,Xiaokang Fu
+author: Lingbo Liu,Tobias Koetter
 vendor: SDL, Harvard, Cambridge US
 description: Google Earth Engine Extension for KNIME # Human readable bundle name / description
 long_description: KNIME nodes for processing, analyzing and visualizing satellite imagery using Google Earth Engine.

@@ -69,12 +69,16 @@ class GEEAuthenticate:
     - In the Google Authenticator node, select "Interactive" authentication method
     - Set scope to "Custom" and enter: *https://www.googleapis.com/auth/earthengine*
     - Sign in with your Google account that has Earth Engine access
+    - For Drive exports: Additionally add *https://www.googleapis.com/auth/drive*
+    - For Cloud exports: Additionally add *https://www.googleapis.com/auth/cloud-platform*
 
     **For Service Account Authentication:**
 
     - In the Google Authenticator node, select "Google Service Account JSON Key" method
     - Upload your service account JSON key file
     - Set scope to "Custom" and enter: *https://www.googleapis.com/auth/earthengine*
+    - For Cloud exports: Additionally add *https://www.googleapis.com/auth/cloud-platform*
+    - **Note:** Drive export is not supported for service accounts
 
     **Important**: You must add the "Service Usage Consumer" role to your service account:
 
