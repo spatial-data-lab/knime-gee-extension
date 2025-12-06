@@ -306,6 +306,56 @@ class GEEClassifierConnectionObject(BaseGEEConnectionObject):
         )
 
 
+# Clusterer Connection Object
+class GEEClustererConnectionObject(BaseGEEConnectionObject):
+    """Connection object specifically for GEE Clusterer objects with training metadata."""
+
+    def __init__(
+        self,
+        spec: GoogleEarthEngineObjectSpec,
+        credentials=None,
+        clusterer=None,
+        input_properties=None,  # Input properties (bands) used during training
+    ):
+        super().__init__(spec, credentials)
+        self._clusterer = clusterer
+        self._input_properties = input_properties
+
+    @property
+    def clusterer(self):
+        """Get the trained GEE Clusterer object"""
+        return self._clusterer
+
+    @property
+    def gee_object(self):
+        """Alias for clusterer to maintain compatibility"""
+        return self._clusterer
+
+    @property
+    def input_properties(self):
+        """Get the input properties (bands/features) used during training"""
+        return self._input_properties
+
+    def to_connection_data(self):
+        return {
+            "credentials": self._credentials,
+            "clusterer": self._clusterer,
+            "input_properties": self._input_properties,
+        }
+
+    @classmethod
+    def from_connection_data(cls, spec: knext.PortObjectSpec, data):
+        credentials = data.get("credentials") if data else None
+        clusterer = data.get("clusterer") if data else None
+        input_properties = data.get("input_properties") if data else None
+        return cls(
+            spec,
+            credentials,
+            clusterer,
+            input_properties,
+        )
+
+
 # Specialized Spec classes for different port types
 # Each port type needs a unique Spec class, even if they contain the same data
 class GEEImageObjectSpec(GoogleEarthEngineObjectSpec):
@@ -322,6 +372,12 @@ class GEEFeatureCollectionObjectSpec(GoogleEarthEngineObjectSpec):
 
 class GEEClassifierObjectSpec(GoogleEarthEngineObjectSpec):
     """Spec class for GEE Classifier port type."""
+
+    pass
+
+
+class GEEClustererObjectSpec(GoogleEarthEngineObjectSpec):
+    """Spec class for GEE Clusterer port type."""
 
     pass
 
@@ -380,6 +436,12 @@ gee_classifier_port_type = knext.port_type(
     "GEE Classifier Port Type",
     GEEClassifierConnectionObject,
     GEEClassifierObjectSpec,
+)
+
+gee_clusterer_port_type = knext.port_type(
+    "GEE Clusterer Port Type",
+    GEEClustererConnectionObject,
+    GEEClustererObjectSpec,
 )
 
 gee_image_collection_port_type = knext.port_type(

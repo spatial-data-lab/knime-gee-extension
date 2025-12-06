@@ -20,5 +20,6 @@ import nodes.featureio
 import nodes.visualize
 import nodes.sampling
 import nodes.supervise
+import nodes.cluster
 
 # import nodes.tool

@@ -468,6 +468,39 @@ def export_gee_classifier_connection(
     )
 
 
+def export_gee_clusterer_connection(
+    clusterer,
+    existing_connection,
+    input_properties=None,
+):
+    """
+    Export a GEE Clusterer as a specialized Clusterer connection object.
+
+    Args:
+        clusterer: The trained GEE Clusterer object
+        existing_connection: Existing connection object to get credentials and project_id from
+        input_properties: Input properties (bands/features) used during training
+
+    Returns:
+        GEEClustererConnectionObject: Specialized Clusterer connection object
+    """
+    from util.common import (
+        GEEClustererConnectionObject,
+        GEEClustererObjectSpec,
+    )
+
+    credentials = existing_connection.credentials
+    project_id = existing_connection.spec.project_id
+    spec = GEEClustererObjectSpec(project_id)
+
+    return GEEClustererConnectionObject(
+        spec=spec,
+        credentials=credentials,
+        clusterer=clusterer,
+        input_properties=input_properties,
+    )
+
+
 def export_gee_image_collection_connection(image_collection, existing_connection):
     """
     Export a GEE ImageCollection as a specialized ImageCollection connection object.
