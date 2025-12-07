@@ -1041,7 +1041,7 @@ class TrainingDataPartitioner:
 
 
 @knext.node(
-    name="Random Forest Learner",
+    name="GEE Random Forest Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "RandomForest.png",
@@ -1312,7 +1312,7 @@ class RandomForestLearner:
 
 
 @knext.node(
-    name="CART Learner",
+    name="GEE CART Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "cart.png",
@@ -1542,7 +1542,7 @@ class CARTLearner:
 
 
 @knext.node(
-    name="SVM Learner",
+    name="GEE SVM Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "SVM.png",
@@ -1791,7 +1791,7 @@ class SVMLearner:
 
 
 @knext.node(
-    name="Naive Bayes Learner",
+    name="GEE Naive Bayes Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "NaiveBayes.png",
@@ -2336,7 +2336,7 @@ class FeatureCollectionPredictor:
 
 
 @knext.node(
-    name="Classifier Scorer",
+    name="GEE Classifier Scorer",
     node_type=knext.NodeType.OTHER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "scorer.png",

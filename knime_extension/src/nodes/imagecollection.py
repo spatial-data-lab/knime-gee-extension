@@ -17,7 +17,7 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="imagecollection",
-    name="Image Collection IO",
+    name="GEE Image Collection",
     description="Google Earth Engine Image Input/Output and Processing nodes",
     icon="icons/ImageCollection.png",
     after="authorization",
@@ -900,3 +900,267 @@ class ImageCollectionAggregator:
             image = image_collection.first()
 
         return knut.export_gee_image_connection(image, ic_connection)
+
+
+############################################
+# Image Collection Time Series Extractor
+############################################
+
+
+@knext.node(
+    name="Pixel-Band Time Series Extractor",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "TimeSeriesExtractor.png",
+    id="imagecollectiontimeseriesextractor",
+    after="imagecollectionaggregator",
+)
+@knext.input_port(
+    name="GEE Image Collection Connection",
+    description="GEE Image Collection connection with time series images.",
+    port_type=gee_image_collection_port_type,
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection defining the region. The centroid of all features will be used as the extraction point.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_table(
+    name="Time Series Table",
+    description="Table containing time series data with date and band values.",
+)
+class ImageCollectionTimeSeriesExtractor:
+    """Extracts time series pixel values from an Image Collection at a point location.
+
+    This node extracts pixel values for a specified band from each image in an Image Collection
+    at the centroid of the input Feature Collection. This is useful for analyzing temporal trends,
+    monitoring changes over time, and creating time series visualizations.
+
+    **Input Requirements:**
+
+    - **Image Collection**: Filtered Image Collection (date filtering can be done with filter nodes)
+    - **Feature Collection**: Any geometry type (point, polygon, etc.) - the centroid will be used
+
+    **Output:**
+
+    - Table with columns: **date**, **value**
+    - Each row represents one time point from the Image Collection
+
+    **Use Cases:**
+
+    - Monitor vegetation indices (NDVI, EVI) over time
+    - Track land cover changes
+    - Analyze seasonal patterns
+    - Create time series charts for specific locations
+
+    **Workflow Example:**
+
+    1. Filter Image Collection: `Image Collection Reader` → `Image Collection General Filter` (date range)
+    2. Select band: `Image Collection Band Selector` (optional, or specify in this node)
+    3. Define region: `Feature Collection Reader` or create point/polygon
+    4. Extract time series: This node
+    5. Visualize: Use KNIME's plotting nodes to create time series charts
+    """
+
+    band = knext.StringParameter(
+        "Band name",
+        "Name of the band to extract (e.g., 'B4', 'NDVI', 'sur_refl_b01'). Must exist in the Image Collection.",
+        default_value="B4",
+    )
+
+    def configure(self, configure_context, input_schema1, input_schema2):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        ic_connection,
+        fc_connection,
+    ):
+        import ee
+        import logging
+        import pandas as pd
+        from datetime import datetime
+
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            # Get Image Collection and Feature Collection
+            image_collection = ic_connection.image_collection
+            feature_collection = fc_connection.feature_collection
+
+            if not isinstance(image_collection, ee.ImageCollection):
+                raise ValueError("Input must be an ImageCollection")
+
+            if not isinstance(feature_collection, ee.FeatureCollection):
+                raise ValueError("Input must be a FeatureCollection")
+
+            # Get centroid of Feature Collection (unaryUnion then centroid)
+            LOGGER.warning("Calculating centroid of Feature Collection...")
+            centroid = feature_collection.geometry().centroid()
+            centroid_coords = centroid.coordinates().getInfo()
+            LOGGER.warning(f"Using centroid point: {centroid_coords}")
+
+            # Create a point FeatureCollection for extraction
+            point_fc = ee.FeatureCollection([ee.Feature(centroid, {"id": "point"})])
+
+            # Get the first image to determine scale and validate band
+            first_image = image_collection.first()
+            band_names = first_image.bandNames().getInfo()
+
+            if self.band not in band_names:
+                raise ValueError(
+                    f"Band '{self.band}' not found in Image Collection. Available bands: {band_names}"
+                )
+
+            # Get nominal scale from first image
+            try:
+                scale = (
+                    first_image.select(self.band).projection().nominalScale().getInfo()
+                )
+                LOGGER.warning(f"Using automatic scale: {scale} meters")
+            except Exception as e:
+                LOGGER.warning(
+                    f"Could not get nominal scale: {e}. Using default scale: 30 meters"
+                )
+                scale = 30
+
+            # Select the specified band from the collection
+            band_collection = image_collection.select(self.band)
+
+            # Get collection size for progress tracking
+            try:
+                collection_size = image_collection.size().getInfo()
+                LOGGER.warning(
+                    f"Extracting time series from {collection_size} images at point {centroid_coords}"
+                )
+            except Exception:
+                LOGGER.warning("Extracting time series (size check skipped)")
+
+            # Use getRegion to extract time series efficiently
+            # This is more efficient than looping through images
+            LOGGER.warning(f"Extracting time series for band '{self.band}'...")
+            try:
+                # Get region data - returns a list of lists
+                region_data = band_collection.getRegion(
+                    geometry=centroid,
+                    scale=scale,
+                    crs="EPSG:4326",
+                ).getInfo()
+
+                # Parse the region data
+                # First row contains headers: ['id', 'longitude', 'latitude', 'time', band_name]
+                if not region_data or len(region_data) < 2:
+                    raise ValueError("No data extracted from Image Collection")
+
+                headers = region_data[0]
+                band_index = headers.index(self.band) if self.band in headers else None
+                time_index = headers.index("time") if "time" in headers else None
+
+                if band_index is None:
+                    raise ValueError(f"Band '{self.band}' not found in extracted data")
+
+                # Extract time series data
+                time_series_data = []
+                for row in region_data[1:]:  # Skip header row
+                    if len(row) > band_index:
+                        value = (
+                            row[band_index]
+                            if band_index < len(row) and row[band_index] is not None
+                            else None
+                        )
+                        if value is not None:
+                            # Convert time from milliseconds to date string
+                            if (
+                                time_index is not None
+                                and time_index < len(row)
+                                and row[time_index] is not None
+                            ):
+                                time_ms = row[time_index]
+                                date_str = datetime.fromtimestamp(
+                                    time_ms / 1000
+                                ).strftime("%Y-%m-%d")
+                            else:
+                                # Try to get date from 'id' column if available
+                                id_index = (
+                                    headers.index("id") if "id" in headers else None
+                                )
+                                if (
+                                    id_index is not None
+                                    and id_index < len(row)
+                                    and row[id_index] is not None
+                                ):
+                                    # Extract date from image ID if it contains date information
+                                    image_id = str(row[id_index])
+                                    # Try to parse date from common ID formats
+                                    date_str = None
+                                    # For now, skip if we can't get date
+                                else:
+                                    date_str = None
+
+                            if date_str:
+                                time_series_data.append(
+                                    {"date": date_str, "value": value}
+                                )
+
+            except Exception as e:
+                LOGGER.warning(
+                    f"getRegion method failed: {e}. Falling back to iterative method..."
+                )
+                # Fallback: iterate through images
+                time_series_data = []
+                image_list = image_collection.toList(image_collection.size())
+                image_list_size = image_list.size().getInfo()
+
+                for i in range(image_list_size):
+                    try:
+                        image = ee.Image(image_list.get(i))
+                        # Get date
+                        time_start = image.get("system:time_start").getInfo()
+                        date_str = datetime.fromtimestamp(time_start / 1000).strftime(
+                            "%Y-%m-%d"
+                        )
+
+                        # Extract value at point
+                        value_dict = (
+                            image.select(self.band)
+                            .reduceRegion(
+                                reducer=ee.Reducer.first(),
+                                geometry=centroid,
+                                scale=scale,
+                                maxPixels=1e9,
+                            )
+                            .getInfo()
+                        )
+
+                        value = value_dict.get(self.band, None)
+                        if value is not None:
+                            time_series_data.append({"date": date_str, "value": value})
+
+                        if (i + 1) % 10 == 0:
+                            LOGGER.warning(
+                                f"Processed {i + 1}/{image_list_size} images..."
+                            )
+                    except Exception as img_error:
+                        LOGGER.warning(f"Failed to process image {i + 1}: {img_error}")
+                        continue
+
+            if not time_series_data:
+                raise ValueError(
+                    "No valid time series data extracted. Check that the point is within image bounds and the band exists."
+                )
+
+            # Create DataFrame
+            df = pd.DataFrame(time_series_data)
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.sort_values("date").reset_index(drop=True)
+
+            LOGGER.warning(
+                f"Successfully extracted {len(df)} time series points for band '{self.band}'"
+            )
+
+            return knext.Table.from_pandas(df)
+
+        except Exception as e:
+            LOGGER.error(f"Time series extraction failed: {e}")
+            raise

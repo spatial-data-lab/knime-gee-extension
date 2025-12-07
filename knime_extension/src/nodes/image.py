@@ -16,7 +16,7 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="imageio",
-    name="Image IO",
+    name="GEE Image",
     description="Google Earth Engine Image Input/Output and Processing nodes",
     icon="icons/ImageIO.png",
     after="imagecollection",
@@ -759,17 +759,41 @@ class ImageGetInfo:
     **Information Displayed:**
 
     - **Band Information**: Names, types, and properties of all bands
+    - **Nominal Scale** (optional): Pixel resolution in meters for each band (enabled via parameter)
     - **Image Properties**: Metadata, acquisition date, cloud cover, etc.
     - **Geometry**: Bounding box and projection information
     - **System Properties**: GEE internal properties and identifiers
 
+    **Note on Nominal Scale:**
+
+    - Nominal scale extraction is **optional** and disabled by default (see **Add nominal scale** parameter)
+    - When enabled, each band's **nominal_scale** is extracted and added to the band information
+    - Different bands may have different resolutions (e.g., Sentinel-2: 10m, 20m, 60m bands)
+    - The nominal_scale is the pixel resolution in meters, useful for determining appropriate sampling scales
+    - **Performance**: Extracting nominal scale requires a separate API call per band, which can be slow for images with many bands
+
     **Use Cases:**
 
     - Explore image structure and available bands
-    - Verify image properties before analysis
+    - Verify image properties and band resolutions before analysis
     - Debug image processing issues
     - Understand image metadata and acquisition parameters
+    - Determine appropriate scale for sampling operations
     """
+
+    add_nominal_scale = knext.BoolParameter(
+        "Add nominal scale",
+        """If enabled, extracts and adds nominal_scale (pixel resolution in meters) for each band.
+        
+        **Performance Note:**
+        - This requires a separate GEE API call for each band
+        - For images with many bands (e.g., Sentinel-2 with 20+ bands), this can be slow
+
+        - The nominal_scale is useful for determining appropriate sampling scales in other nodes
+        """,
+        default_value=False,
+        is_advanced=True,
+    )
 
     def configure(self, configure_context, input_schema):
         return None
@@ -788,6 +812,38 @@ class ImageGetInfo:
 
             # Get image information efficiently
             info = image.getInfo()
+
+            # Add nominal_scale for each band (optional, can be slow for many bands)
+            # Different bands may have different resolutions (e.g., Sentinel-2: 10m, 20m, 60m)
+            if (
+                self.add_nominal_scale
+                and "bands" in info
+                and isinstance(info["bands"], list)
+            ):
+                LOGGER.warning(
+                    f"Extracting nominal scale for {len(info['bands'])} bands..."
+                )
+                for band in info["bands"]:
+                    band_id = band.get("id")
+                    if band_id:
+                        try:
+                            # Get nominal scale for this specific band
+                            nominal_scale = (
+                                image.select(band_id)
+                                .projection()
+                                .nominalScale()
+                                .getInfo()
+                            )
+                            band["nominal_scale"] = nominal_scale
+                            LOGGER.warning(
+                                f"Band {band_id}: nominal_scale = {nominal_scale} meters"
+                            )
+                        except Exception as e:
+                            LOGGER.warning(
+                                f"Could not get nominalScale for band {band_id}: {e}"
+                            )
+                            band["nominal_scale"] = None
+                LOGGER.warning("Successfully added nominal_scale for all bands")
 
             # Format as JSON for display
             json_string = json.dumps(info, indent=2)
@@ -1434,7 +1490,7 @@ class GeoTiffToGEEImage:
 
 
 @knext.node(
-    name="Image Value Filter",
+    name="GEE Image Value Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageValueFilter.png",
