@@ -15,7 +15,7 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="featureio",
-    name="Feature Collection IO",
+    name="Feature Collection",
     description="Google Earth Engine Feature Collection Input/Output and Processing nodes",
     icon="icons/featureIO.png",
     after="imageio",
