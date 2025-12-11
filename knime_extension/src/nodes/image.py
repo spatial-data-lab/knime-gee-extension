@@ -1617,8 +1617,11 @@ class ImageValueFilter:
 class ImageMorphology:
     """Applies morphological operations (opening and closing) to a binary image.
 
-    This node performs morphological operations on binary images (0 and >0 values).
-    The input image is first binarized to 0/1, then morphological operations are applied.
+    This node performs morphological operations on **binary images** (0 and >0 values).
+    The input is binarized to 0/1 (>0 => 1, else 0) for processing; please ensure
+    your upstream node has produced a binary mask (e.g., via Image Value Filter).
+    The original mask is preserved so morphology will not expand into previously
+    masked-out areas.
 
     **Morphological Operations:**
 
@@ -1676,6 +1679,12 @@ class ImageMorphology:
         default_value=False,
     )
 
+    output_band_name = knext.StringParameter(
+        "Output band name",
+        "Name of the output morphology band (0/1).",
+        default_value="morph",
+    )
+
     def configure(self, configure_context, input_schema):
         return None
 
@@ -1699,15 +1708,12 @@ class ImageMorphology:
             )
 
         try:
-            # Get first band name
-            band_names = image.bandNames().getInfo()
-            if not band_names:
-                raise ValueError("Input image must have at least one band.")
-            bandname = band_names[0]
+            # Keep original mask so we don't expand into masked-out regions
+            original_mask = image.mask()
 
             # Step 1: Binarize to 0/1
-            # If there's a mask, fill with 0 first; then >0 => 1, otherwise 0
-            bin01 = image.unmask(0).gt(0).rename("bin01").toByte()  # 0/1
+            # Preserve existing mask; >0 => 1, otherwise 0
+            bin01 = image.gt(0).rename("bin01")  # 0/1 with original mask
 
             # Step 2: Define kernel
             if self.kernel_shape == "circle":
@@ -1739,11 +1745,17 @@ class ImageMorphology:
                 )
 
             # Ensure output is 0/1 (focal operations should maintain 0/1, but explicit normalization is safer)
-            morph01 = out.gt(0).rename("morph01").toByte()  # 0 or 1
+            morph01 = (
+                out.gt(0)
+                .rename(self.output_band_name)
+                .toByte()
+                .updateMask(original_mask)
+            )  # 0 or 1, with original mask
 
             LOGGER.warning(
                 f"Successfully applied morphology: opening={self.do_open}, closing={self.do_close}, "
-                f"kernel={self.kernel_shape}, radius={self.kernel_radius}"
+                f"kernel={self.kernel_shape}, radius={self.kernel_radius}, "
+                f"output_band={self.output_band_name}"
             )
 
             return knut.export_gee_image_connection(morph01, image_connection)
