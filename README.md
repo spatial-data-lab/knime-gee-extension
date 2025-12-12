@@ -1,6 +1,6 @@
-# KNIME Earth Engine Extension
+# KNIME Google Earth Engine Extension
 
-KNIME Earth Engine Extension
+KNIME Google Earth Engine Extension
 
 
 ## Package Organization
