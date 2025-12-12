@@ -1592,6 +1592,180 @@ class ImageValueFilter:
 
 
 ############################################
+# Image Morphology
+############################################
+
+
+@knext.node(
+    name="GEE Image Morphology",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ImageMorphology.png",
+    id="imagemorphology",
+    after="imagevaluefilter",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object. Input should be a single-band binary image (0 and >0 values).",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with morphology operation applied (binary 0/1 output).",
+    port_type=gee_image_port_type,
+)
+class ImageMorphology:
+    """Applies morphological operations (opening and closing) to a binary image.
+
+    This node performs morphological operations on **binary images** (0 and >0 values).
+    The input is binarized to 0/1 (>0 => 1, else 0) for processing; please ensure
+    your upstream node has produced a binary mask (e.g., via Image Value Filter).
+    The original mask is preserved so morphology will not expand into previously
+    masked-out areas.
+
+    **Morphological Operations:**
+
+    - **Opening**: Erosion followed by dilation. Removes small objects and smooths boundaries.
+    - **Closing**: Dilation followed by erosion. Fills small holes and connects nearby objects.
+
+    **Kernel Types:**
+
+    - **Circle**: Circular kernel (approximated by pixels)
+    - **Square**: Square kernel (3x3, 5x5, etc.)
+
+    **Use Cases:**
+
+    - Remove noise from binary classification results
+    - Fill small holes in segmented regions
+    - Smooth boundaries of classified objects
+    - Clean up binary masks before vectorization
+    - Prepare binary images for further processing
+
+    **Common Workflow:**
+
+    1. Create binary image: Use **Image Value Filter** to create binary mask (e.g., NDVI > 0.5)
+    2. Apply morphology: Use this node to clean up the binary image
+    3. Vectorize: Use **Pixels to Feature Collection** to convert to polygons
+
+    **Note:** Both opening and closing can be applied in sequence. The order matters:
+    - Opening first, then closing: Removes noise then fills holes
+    - Closing first, then opening: Fills holes then removes noise
+    """
+
+    kernel_radius = knext.IntParameter(
+        "Kernel radius (pixels)",
+        "Radius of the morphological kernel in pixels. A radius of 1 creates a 3x3 kernel, radius of 2 creates a 5x5 kernel, etc.",
+        default_value=1,
+        min_value=1,
+        max_value=10,
+    )
+
+    kernel_shape = knext.StringParameter(
+        "Kernel shape",
+        "Shape of the morphological kernel.",
+        default_value="circle",
+        enum=["circle", "square"],
+    )
+
+    do_open = knext.BoolParameter(
+        "Apply opening",
+        "If enabled, applies opening operation (erosion followed by dilation). Removes small objects and smooths boundaries.",
+        default_value=False,
+    )
+
+    do_close = knext.BoolParameter(
+        "Apply closing",
+        "If enabled, applies closing operation (dilation followed by erosion). Fills small holes and connects nearby objects.",
+        default_value=False,
+    )
+
+    output_band_name = knext.StringParameter(
+        "Output band name",
+        "Name of the output morphology band (0/1).",
+        default_value="morph",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        # Get image from connection
+        image = image_connection.image
+
+        # Validate that at least one operation is enabled
+        if not self.do_open and not self.do_close:
+            raise ValueError(
+                "At least one morphological operation must be enabled (opening or closing)."
+            )
+
+        try:
+            # Keep original mask so we don't expand into masked-out regions
+            original_mask = image.mask()
+
+            # Step 1: Binarize to 0/1
+            # Preserve existing mask; >0 => 1, otherwise 0
+            bin01 = image.gt(0).rename("bin01")  # 0/1 with original mask
+
+            # Step 2: Define kernel
+            if self.kernel_shape == "circle":
+                # Approximate circular kernel (True means include center)
+                kernel = ee.Kernel.circle(self.kernel_radius, "pixels", True)
+            else:
+                # Default square kernel (3x3, 5x5...)
+                kernel = ee.Kernel.square(self.kernel_radius, "pixels", True)
+
+            # Step 3: Apply morphological operations
+            out = bin01
+
+            if self.do_open:
+                # Opening: erosion (min) followed by dilation (max)
+                out = out.focal_min(self.kernel_radius, kernel=kernel).focal_max(
+                    self.kernel_radius, kernel=kernel
+                )
+                LOGGER.warning(
+                    f"Applied opening operation with {self.kernel_shape} kernel (radius={self.kernel_radius})"
+                )
+
+            if self.do_close:
+                # Closing: dilation (max) followed by erosion (min)
+                out = out.focal_max(self.kernel_radius, kernel=kernel).focal_min(
+                    self.kernel_radius, kernel=kernel
+                )
+                LOGGER.warning(
+                    f"Applied closing operation with {self.kernel_shape} kernel (radius={self.kernel_radius})"
+                )
+
+            # Ensure output is 0/1 (focal operations should maintain 0/1, but explicit normalization is safer)
+            morph01 = (
+                out.gt(0)
+                .rename(self.output_band_name)
+                .toByte()
+                .updateMask(original_mask)
+            )  # 0 or 1, with original mask
+
+            LOGGER.warning(
+                f"Successfully applied morphology: opening={self.do_open}, closing={self.do_close}, "
+                f"kernel={self.kernel_shape}, radius={self.kernel_radius}, "
+                f"output_band={self.output_band_name}"
+            )
+
+            return knut.export_gee_image_connection(morph01, image_connection)
+
+        except Exception as e:
+            LOGGER.error(f"Morphology operation failed: {e}")
+            raise
+
+
+############################################
 # Image Mask Apply
 ############################################
 
