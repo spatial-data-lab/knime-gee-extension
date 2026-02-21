@@ -172,6 +172,26 @@ class ImageReader:
                 "Image name cannot be empty. Please provide a valid GEE image ID "
             )
         try:
+            asset = ee.data.getAsset(imagename)
+        except Exception as e:
+            LOGGER.error(f"Failed to fetch asset metadata for '{imagename}': {e}")
+            raise ValueError(
+                f"Asset '{imagename}' was not found or is not accessible. "
+                f"Please verify the image ID and your access permissions. Error: {str(e)}"
+            ) from e
+
+        asset_type = (asset or {}).get("type")
+        if asset_type != "IMAGE":
+            suggested = {
+                "IMAGE_COLLECTION": "GEE Image Collection Reader",
+                "FEATURE_COLLECTION": "GEE Feature Collection Reader",
+            }.get(asset_type, "the appropriate reader node")
+            raise ValueError(
+                f"Asset '{imagename}' is not an Image (type: {asset_type}). "
+                f"Please use {suggested}."
+            )
+
+        try:
             image = ee.Image(imagename)
         except Exception as e:
             LOGGER.error(f"Failed to load image '{imagename}': {e}")

@@ -91,11 +91,37 @@ class GEEFeatureCollectionReader:
 
         # GEE is already initialized in the same Python process from the connection
 
-        # Load feature collection
-        feature_collection = ee.FeatureCollection(self.collection_id)
+        collection_id = (self.collection_id or "").strip()
+        if not collection_id:
+            raise ValueError(
+                "Collection ID cannot be empty. Please provide a valid GEE feature collection ID."
+            )
 
         try:
-            LOGGER.warning(f"Loaded feature collection: {self.collection_id}")
+            asset = ee.data.getAsset(collection_id)
+        except Exception as e:
+            LOGGER.error(f"Failed to fetch asset metadata for '{collection_id}': {e}")
+            raise ValueError(
+                f"Asset '{collection_id}' was not found or is not accessible. "
+                f"Please verify the collection ID and your access permissions. Error: {str(e)}"
+            ) from e
+
+        asset_type = (asset or {}).get("type")
+        if asset_type != "FEATURE_COLLECTION":
+            suggested = {
+                "IMAGE": "GEE Image Reader",
+                "IMAGE_COLLECTION": "GEE Image Collection Reader",
+            }.get(asset_type, "the appropriate reader node")
+            raise ValueError(
+                f"Asset '{collection_id}' is not a Feature Collection (type: {asset_type}). "
+                f"Please use {suggested}."
+            )
+
+        # Load feature collection
+        feature_collection = ee.FeatureCollection(collection_id)
+
+        try:
+            LOGGER.warning(f"Loaded feature collection: {collection_id}")
             return knut.export_gee_feature_collection_connection(
                 feature_collection, gee_connection
             )
@@ -1753,6 +1779,19 @@ class GeoTableToFeatureCollection:
 
         # Create GeoDataFrame
         shp = gp.GeoDataFrame(df, geometry=self.geo_col)
+
+        # Drop extra geometry columns to avoid GeoDataFrame.to_file errors
+        geometry_columns = list(shp.select_dtypes(include="geometry").columns)
+        extra_geometry_columns = [
+            col for col in geometry_columns if col != self.geo_col
+        ]
+        if extra_geometry_columns:
+            LOGGER.warning(
+                "Dropping additional geometry columns: "
+                + ", ".join(extra_geometry_columns)
+            )
+            shp = shp.drop(columns=extra_geometry_columns)
+            shp = shp.set_geometry(self.geo_col)
 
         # Ensure CRS is WGS84 (EPSG:4326)
         if shp.crs is None:

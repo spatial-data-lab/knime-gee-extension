@@ -209,10 +209,36 @@ class ImageCollectionReader:
 
         LOGGER = logging.getLogger(__name__)
 
-        # Load image collection
-        image_collection = ee.ImageCollection(self.collection_id)
+        collection_id = (self.collection_id or "").strip()
+        if not collection_id:
+            raise ValueError(
+                "Collection ID cannot be empty. Please provide a valid GEE image collection ID."
+            )
 
-        LOGGER.warning(f"Loaded image collection: {self.collection_id}")
+        try:
+            asset = ee.data.getAsset(collection_id)
+        except Exception as e:
+            LOGGER.error(f"Failed to fetch asset metadata for '{collection_id}': {e}")
+            raise ValueError(
+                f"Asset '{collection_id}' was not found or is not accessible. "
+                f"Please verify the collection ID and your access permissions. Error: {str(e)}"
+            ) from e
+
+        asset_type = (asset or {}).get("type")
+        if asset_type != "IMAGE_COLLECTION":
+            suggested = {
+                "IMAGE": "GEE Image Reader",
+                "FEATURE_COLLECTION": "GEE Feature Collection Reader",
+            }.get(asset_type, "the appropriate reader node")
+            raise ValueError(
+                f"Asset '{collection_id}' is not an Image Collection (type: {asset_type}). "
+                f"Please use {suggested}."
+            )
+
+        # Load image collection
+        image_collection = ee.ImageCollection(collection_id)
+
+        LOGGER.warning(f"Loaded image collection: {collection_id}")
 
         return knut.export_gee_image_collection_connection(
             image_collection, gee_connection
@@ -822,7 +848,7 @@ class ImageCollectionSpatialFilter:
 
     - **Filter by Bounds**: Keep only images that intersect the ROI
     - **Clip to ROI**: Clip each image to the exact ROI boundary
-    - **Combined**: Filter by bounds and clip simultaneously
+    - **Combined**: Filter by bounds and clip simultaneously. Select both options to enable this.
 
     **Common Use Cases:**
 

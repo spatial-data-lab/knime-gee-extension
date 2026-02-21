@@ -260,9 +260,11 @@ class ViewNodeGEEMap:
     This view is highly interactive and allows you to change various aspects of the view within the visualization itself.
 
     **Band Selection:**
+
     - Specify which bands to visualize (e.g., 'B4,B3,B2' for RGB)
     - Leave empty to auto-use first 3 bands for RGB or first band for single-band
     - Common RGB combinations:
+
       - Landsat: 'B4,B3,B2' (True Color)
       - Sentinel-2: 'B4,B3,B2' (True Color)
       - False Color: 'B8,B4,B3' (Sentinel-2 vegetation)
@@ -273,16 +275,20 @@ class ViewNodeGEEMap:
     2. **RGB Mode**: For 3+ selected bands, uses first 3 bands as RGB channels
 
     **Visualization Features**:
+
     - **Statistics Modes**:
+
       - **Auto Min/Max**: Automatically calculates min/max for each band independently
       - **Auto Quartiles**: Automatically calculates Q1/Q3 for each band independently (robust to outliers)
       - **Manual**: Manually specify min/max values (single value or comma-separated list per band)
+
     - **Per-Band Visualization**: In RGB mode, each band can have independent min/max values
     - **Color Palettes**: Comma-separated colors as hex or CSS color names (e.g. red, blue). See: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
     - **Transparency**: Adjustable alpha channel for overlay visualization
     - **Base Maps**: Choose from OpenStreetMap, Satellite, Terrain, or Hybrid backgrounds
 
     **Usage**:
+
     - Specify bands to visualize (e.g., 'B4,B3,B2' for RGB visualization)
     - Leave bands empty to auto-use first available bands
     - Choose statistics mode: Auto Min/Max (default), Auto Quartiles (robust), or Manual
@@ -299,6 +305,7 @@ class ViewNodeGEEMap:
         Leave empty to auto-use first 3 bands (RGB) or first band (single-band).
         
         Common combinations:
+
         - Landsat True Color: 'B4,B3,B2'
         - Sentinel-2 True Color: 'B4,B3,B2'
         - False Color Vegetation: 'B8,B4,B3' (Sentinel-2)
@@ -311,10 +318,11 @@ class ViewNodeGEEMap:
         """Comma-separated color codes for gradient. Supports **hex** (6 digits, with or without #) and **CSS color names** (e.g. red, blue, darkgreen). Color names follow the CSS named color dictionary: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
 
         Common gradient combinations (hex or names):
-        • Terrain: 000080,00FFFF,00FF00,FFFF00,FF0000 or navy,aqua,lime,yellow,red
-        • Heatmap: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
-        • Vegetation: 8B4513,FFFF00,00FF00 (brown-yellow-green)
-        • Simple: 000000,FFFFFF or black,white
+
+        - Terrain: 000080,00FFFF,00FF00,FFFF00,FF0000 or navy,aqua,lime,yellow,red
+        - Heatmap: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
+        - Vegetation: 8B4513,FFFF00,00FF00 (brown-yellow-green)
+        - Simple: 000000,FFFFFF or black,white
 
         Examples: '000080,00FF00,FF0000' or 'navy,green,red'""",
         default_value="000000,FFFFFF",
@@ -331,6 +339,7 @@ class ViewNodeGEEMap:
     stats_mode = knext.StringParameter(
         "Statistics mode",
         """How to determine visualization ranges:
+
         - 'autoMinMax': Automatically calculate min/max for each band independently
         - 'autoQuartiles': Automatically calculate Q1/Q3 for each band independently (robust to outliers)
         - 'manual': Manually specify min/max values (single value or comma-separated list per band)""",
@@ -346,6 +355,7 @@ class ViewNodeGEEMap:
         Can be a single value (applied to all bands) or comma-separated list (one value per band).
         
         Examples:
+
         - Single value: '0.0' (all bands use same min)
         - Per-band values: '-455.09,-2.206,-4.53' (for 3 bands: pc1, pc3, pc4)
         
@@ -361,6 +371,7 @@ class ViewNodeGEEMap:
         Can be a single value (applied to all bands) or comma-separated list (one value per band).
         
         Examples:
+        
         - Single value: '0.3' (all bands use same max)
         - Per-band values: '-417.59,-1.3,-4.18' (for 3 bands: pc1, pc3, pc4)
         
@@ -712,13 +723,16 @@ class ViewNodeGEEImageCollection:
     This view is highly interactive and allows you to change various aspects of the view within the visualization itself.
 
     **Image Collection Handling:**
+
     - Automatically creates a mosaic from the collection (most recent pixel shown)
     - Equivalent to GEE JavaScript: Map.addLayer(collection, {bands: ['B4','B3','B2'], ...})
 
     **Band Selection:**
+
     - Specify which bands to visualize (e.g., 'B4,B3,B2' for RGB)
     - Leave empty to auto-use first 3 bands for RGB or first band for single-band
     - Common RGB combinations:
+
       - Landsat: 'B4,B3,B2' (True Color)
       - Sentinel-2: 'B4,B3,B2' (True Color)
       - False Color: 'B8,B4,B3' (Sentinel-2 vegetation)
@@ -729,16 +743,19 @@ class ViewNodeGEEImageCollection:
     2. **RGB Mode**: For 3+ selected bands, uses first 3 bands as RGB channels
 
     **Visualization Features**:
+
     - **Statistics Modes**:
       - **Auto Min/Max**: Automatically calculates min/max for each band independently
       - **Auto Quartiles**: Automatically calculates Q1/Q3 for each band independently (robust to outliers)
       - **Manual**: Manually specify min/max values (single value or comma-separated list per band)
+
     - **Per-Band Visualization**: In RGB mode, each band can have independent min/max values
     - **Color Palettes**: Comma-separated colors as hex or CSS color names (e.g. red, blue). See: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
     - **Transparency**: Adjustable alpha channel for overlay visualization
     - **Base Maps**: Choose from OpenStreetMap, Satellite, Terrain, or Hybrid backgrounds
 
     **Usage**:
+
     - Specify bands to visualize (e.g., 'B4,B3,B2' for RGB visualization)
     - Leave bands empty to auto-use first available bands
     - Choose statistics mode: Auto Min/Max (default), Auto Quartiles (robust), or Manual
@@ -755,6 +772,7 @@ class ViewNodeGEEImageCollection:
         Leave empty to auto-use first 3 bands (RGB) or first band (single-band).
         
         Common combinations:
+
         - Landsat True Color: 'B4,B3,B2'
         - Sentinel-2 True Color: 'B4,B3,B2'
         - False Color Vegetation: 'B8,B4,B3' (Sentinel-2)
@@ -768,12 +786,13 @@ class ViewNodeGEEImageCollection:
         Only used for single-band visualization.
                 
         Common gradient combinations:
-        • Terrain: 000080,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
-        • Heatmap: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
-        • Vegetation: 8B4513,FFFF00,00FF00 (brown-yellow-green)
-        • Elevation: 000080,00FF00,FFFF00,FF8000,FF0000 (blue-green-yellow-orange-red)
-        • Temperature: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (cold to hot)
-        • Simple: 000000,FFFFFF (black to white)
+
+        - Terrain: 000080,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
+        - Heatmap: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
+        - Vegetation: 8B4513,FFFF00,00FF00 (brown-yellow-green)
+        - Elevation: 000080,00FF00,FFFF00,FF8000,FF0000 (blue-green-yellow-orange-red)
+        - Temperature: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (cold to hot)
+        - Simple: 000000,FFFFFF (black to white)
 
         Examples: '000080,00FF00,FF0000' or '#000080,#00FF00,#FF0000'""",
         default_value="000000,FFFFFF",
@@ -791,6 +810,7 @@ class ViewNodeGEEImageCollection:
     stats_mode = knext.StringParameter(
         "Statistics mode",
         """How to determine visualization ranges:
+
         - 'autoMinMax': Automatically calculate min/max for each band independently
         - 'autoQuartiles': Automatically calculate Q1/Q3 for each band independently (robust to outliers)
         - 'manual': Manually specify min/max values (single value or comma-separated list per band)""",
@@ -806,6 +826,7 @@ class ViewNodeGEEImageCollection:
         Can be a single value (applied to all bands) or comma-separated list (one value per band).
         
         Examples:
+
         - Single value: '0.0' (all bands use same min)
         - Per-band values: '-455.09,-2.206,-4.53' (for 3 bands: pc1, pc3, pc4)
         
@@ -821,6 +842,7 @@ class ViewNodeGEEImageCollection:
         Can be a single value (applied to all bands) or comma-separated list (one value per band).
         
         Examples:
+        
         - Single value: '3000' (all bands use same max)
         - Per-band values: '-417.59,-1.3,-4.18' (for 3 bands: pc1, pc3, pc4)
         

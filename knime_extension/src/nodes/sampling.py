@@ -152,6 +152,19 @@ class ImageValueByPoint:
 
         gdf = gp.GeoDataFrame(df, geometry=self.geometry_column).copy()
 
+        # Drop extra geometry columns to avoid multi-geometry issues
+        geometry_columns = list(gdf.select_dtypes(include="geometry").columns)
+        extra_geometry_columns = [
+            col for col in geometry_columns if col != self.geometry_column
+        ]
+        if extra_geometry_columns:
+            LOGGER.warning(
+                "Dropping additional geometry columns: "
+                + ", ".join(extra_geometry_columns)
+            )
+            gdf = gdf.drop(columns=extra_geometry_columns)
+            gdf = gdf.set_geometry(self.geometry_column)
+
         if gdf.geometry.isnull().any():
             raise ValueError(
                 "Geometry column contains null geometries. Please remove them."
@@ -582,10 +595,13 @@ class LocalGeoTableReducer:
         image_connection,
     ):
         import ee
+        import logging
 
         import geopandas as gp
         import geemap
         import pandas as pd
+
+        LOGGER = logging.getLogger(__name__)
 
         # Get image directly from connection object
         image = image_connection.image
@@ -624,6 +640,19 @@ class LocalGeoTableReducer:
 
         # Create GeoDataFrame
         shp = gp.GeoDataFrame(input_table.to_pandas(), geometry=self.geo_col)
+
+        # Drop extra geometry columns to avoid multi-geometry issues
+        geometry_columns = list(shp.select_dtypes(include="geometry").columns)
+        extra_geometry_columns = [
+            col for col in geometry_columns if col != self.geo_col
+        ]
+        if extra_geometry_columns:
+            LOGGER.warning(
+                "Dropping additional geometry columns: "
+                + ", ".join(extra_geometry_columns)
+            )
+            shp = shp.drop(columns=extra_geometry_columns)
+            shp = shp.set_geometry(self.geo_col)
 
         # Ensure CRS is WGS84 (EPSG:4326)
         if shp.crs is None:
