@@ -1,3 +1,5 @@
+import re
+
 import knime.extension as knext
 import util.knime_utils as knut
 from util.common import (
@@ -8,18 +10,227 @@ from util.common import (
     gee_image_collection_port_type,
 )
 
-
 __category = knext.category(
     path="/community/gee",
     level_id="visualize",
     name="GEE View",
-    description="Visualize nodes for Google Earth Engine",
+    description="Display GEE images, image collections, and feature collections on a map.",
     icon="icons/visualize.png",
-    after="featureio",
+    after="focal",
 )
 
 # Root path for all node icons in this file
 __NODE_ICON_PATH = "icons/icon/visualize/"
+
+# CSS named colors (W3C / CSS Color Module). Full list:
+# https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
+# https://www.w3.org/TR/css-color-4/#named-colors
+_CSS_NAMED_COLORS = {
+    "aliceblue": "F0F8FF",
+    "antiquewhite": "FAEBD7",
+    "aqua": "00FFFF",
+    "aquamarine": "7FFFD4",
+    "azure": "F0FFFF",
+    "beige": "F5F5DC",
+    "bisque": "FFE4C4",
+    "black": "000000",
+    "blanchedalmond": "FFEBCD",
+    "blue": "0000FF",
+    "blueviolet": "8A2BE2",
+    "brown": "A52A2A",
+    "burlywood": "DEB887",
+    "cadetblue": "5F9EA0",
+    "chartreuse": "7FFF00",
+    "chocolate": "D2691E",
+    "coral": "FF7F50",
+    "cornflowerblue": "6495ED",
+    "cornsilk": "FFF8DC",
+    "crimson": "DC143C",
+    "cyan": "00FFFF",
+    "darkblue": "00008B",
+    "darkcyan": "008B8B",
+    "darkgoldenrod": "B8860B",
+    "darkgray": "A9A9A9",
+    "darkgreen": "006400",
+    "darkgrey": "A9A9A9",
+    "darkkhaki": "BDB76B",
+    "darkmagenta": "8B008B",
+    "darkolivegreen": "556B2F",
+    "darkorange": "FF8C00",
+    "darkorchid": "9932CC",
+    "darkred": "8B0000",
+    "darksalmon": "E9967A",
+    "darkseagreen": "8FBC8F",
+    "darkslateblue": "483D8B",
+    "darkslategray": "2F4F4F",
+    "darkslategrey": "2F4F4F",
+    "darkturquoise": "00CED1",
+    "darkviolet": "9400D3",
+    "deeppink": "FF1493",
+    "deepskyblue": "00BFFF",
+    "dimgray": "696969",
+    "dimgrey": "696969",
+    "dodgerblue": "1E90FF",
+    "firebrick": "B22222",
+    "floralwhite": "FFFAF0",
+    "forestgreen": "228B22",
+    "fuchsia": "FF00FF",
+    "gainsboro": "DCDCDC",
+    "ghostwhite": "F8F8FF",
+    "gold": "FFD700",
+    "goldenrod": "DAA520",
+    "gray": "808080",
+    "green": "008000",
+    "greenyellow": "ADFF2F",
+    "grey": "808080",
+    "honeydew": "F0FFF0",
+    "hotpink": "FF69B4",
+    "indianred": "CD5C5C",
+    "indigo": "4B0082",
+    "ivory": "FFFFF0",
+    "khaki": "F0E68C",
+    "lavender": "E6E6FA",
+    "lavenderblush": "FFF0F5",
+    "lawngreen": "7CFC00",
+    "lemonchiffon": "FFFACD",
+    "lightblue": "ADD8E6",
+    "lightcoral": "F08080",
+    "lightcyan": "E0FFFF",
+    "lightgoldenrodyellow": "FAFAD2",
+    "lightgray": "D3D3D3",
+    "lightgreen": "90EE90",
+    "lightgrey": "D3D3D3",
+    "lightpink": "FFB6C1",
+    "lightsalmon": "FFA07A",
+    "lightseagreen": "20B2AA",
+    "lightskyblue": "87CEFA",
+    "lightslategray": "778899",
+    "lightslategrey": "778899",
+    "lightsteelblue": "B0C4DE",
+    "lightyellow": "FFFFE0",
+    "lime": "00FF00",
+    "limegreen": "32CD32",
+    "linen": "FAF0E6",
+    "magenta": "FF00FF",
+    "maroon": "800000",
+    "mediumaquamarine": "66CDAA",
+    "mediumblue": "0000CD",
+    "mediumorchid": "BA55D3",
+    "mediumpurple": "9370DB",
+    "mediumseagreen": "3CB371",
+    "mediumslateblue": "7B68EE",
+    "mediumspringgreen": "00FA9A",
+    "mediumturquoise": "48D1CC",
+    "mediumvioletred": "C71585",
+    "midnightblue": "191970",
+    "mintcream": "F5FFFA",
+    "mistyrose": "FFE4E1",
+    "moccasin": "FFE4B5",
+    "navajowhite": "FFDEAD",
+    "navy": "000080",
+    "oldlace": "FDF5E6",
+    "olive": "808000",
+    "olivedrab": "6B8E23",
+    "orange": "FFA500",
+    "orangered": "FF4500",
+    "orchid": "DA70D6",
+    "palegoldenrod": "EEE8AA",
+    "palegreen": "98FB98",
+    "paleturquoise": "AFEEEE",
+    "palevioletred": "DB7093",
+    "papayawhip": "FFEFD5",
+    "peachpuff": "FFDAB9",
+    "peru": "CD853F",
+    "pink": "FFC0CB",
+    "plum": "DDA0DD",
+    "powderblue": "B0E0E6",
+    "purple": "800080",
+    "red": "FF0000",
+    "rosybrown": "BC8F8F",
+    "royalblue": "4169E1",
+    "saddlebrown": "8B4513",
+    "salmon": "FA8072",
+    "sandybrown": "F4A460",
+    "seagreen": "2E8B57",
+    "seashell": "FFF5EE",
+    "sienna": "A0522D",
+    "silver": "C0C0C0",
+    "skyblue": "87CEEB",
+    "slateblue": "6A5ACD",
+    "slategray": "708090",
+    "slategrey": "708090",
+    "snow": "FFFAFA",
+    "springgreen": "00FF7F",
+    "steelblue": "4682B4",
+    "tan": "D2B48C",
+    "teal": "008080",
+    "thistle": "D8BFD8",
+    "tomato": "FF6347",
+    "turquoise": "40E0D0",
+    "violet": "EE82EE",
+    "wheat": "F5DEB3",
+    "white": "FFFFFF",
+    "whitesmoke": "F5F5F5",
+    "yellow": "FFFF00",
+    "yellowgreen": "9ACD32",
+}
+
+
+def _normalize_color_to_hex(token):
+    """Convert a color token to hex with #. Accepts 6-digit hex (with or without #) or CSS named color."""
+    if not token or not isinstance(token, str):
+        raise ValueError(f"Invalid color: {token!r}")
+    s = token.strip()
+    if not s:
+        raise ValueError("Empty color token")
+    # Already hex: 6 hex digits, optional leading #
+    hex_only = s.lstrip("#")
+    if re.match(r"^[0-9A-Fa-f]{6}$", hex_only):
+        return "#" + hex_only.upper()
+    # CSS named color (case-insensitive)
+    key = s.lower()
+    if key in _CSS_NAMED_COLORS:
+        return "#" + _CSS_NAMED_COLORS[key]
+    raise ValueError(
+        f"Unknown color: {s!r}. Use 6-digit hex (e.g. FF0000) or a CSS color name (e.g. red). "
+        "See: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color"
+    )
+
+
+############################################
+# Helper: center map on EE object with auto zoom (skip for global extent)
+############################################
+
+
+def _center_map_on_object(Map, ee_object):
+    """Center map on EE object (image/geometry). Use fit_bounds from geometry.
+    If extent is global (covers whole world), use default centerObject behavior."""
+    import ee
+
+    try:
+        geom = ee_object.geometry() if hasattr(ee_object, "geometry") else ee_object
+        bounds_info = geom.bounds().getInfo()
+        if not bounds_info or "coordinates" not in bounds_info:
+            Map.centerObject(ee_object)
+            return
+        coords = bounds_info.get("coordinates", [[]])[0]
+        if not coords:
+            Map.centerObject(ee_object)
+            return
+        lons = [p[0] for p in coords]
+        lats = [p[1] for p in coords]
+        min_lon, max_lon = min(lons), max(lons)
+        min_lat, max_lat = min(lats), max(lats)
+        lon_span = abs(max_lon - min_lon)
+        lat_span = abs(max_lat - min_lat)
+        if lon_span > 350 or lat_span > 170:
+            Map.centerObject(ee_object)
+            return
+        # folium fit_bounds: [[south, west], [north, east]] = [[min_lat, min_lon], [max_lat, max_lon]]
+        bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+        Map.fit_bounds(bounds)
+    except Exception:
+        Map.centerObject(ee_object)
 
 
 ############################################
@@ -62,21 +273,21 @@ class ViewNodeGEEMap:
     2. **RGB Mode**: For 3+ selected bands, uses first 3 bands as RGB channels
 
     **Visualization Features**:
-    - **Auto Statistics**: Automatically calculates min/max values from non-zero pixels for optimal visualization
-
-    - **Manual Control**: Override auto statistics with custom min/max values
-
-    - **Color Palettes**: Support for custom color gradients using comma-separated hex codes
-
+    - **Statistics Modes**:
+      - **Auto Min/Max**: Automatically calculates min/max for each band independently
+      - **Auto Quartiles**: Automatically calculates Q1/Q3 for each band independently (robust to outliers)
+      - **Manual**: Manually specify min/max values (single value or comma-separated list per band)
+    - **Per-Band Visualization**: In RGB mode, each band can have independent min/max values
+    - **Color Palettes**: Comma-separated colors as hex or CSS color names (e.g. red, blue). See: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
     - **Transparency**: Adjustable alpha channel for overlay visualization
-
     - **Base Maps**: Choose from OpenStreetMap, Satellite, Terrain, or Hybrid backgrounds
 
     **Usage**:
     - Specify bands to visualize (e.g., 'B4,B3,B2' for RGB visualization)
     - Leave bands empty to auto-use first available bands
-    - Enable "Auto Statistics" to let the node calculate optimal visualization ranges
-    - Disable "Auto Statistics" to manually set min/max values for precise control
+    - Choose statistics mode: Auto Min/Max (default), Auto Quartiles (robust), or Manual
+    - In Manual mode, provide min/max as single value (all bands) or comma-separated list (per-band)
+    - Example for PCA: bands='pc1,pc3,pc4', mode='manual', min='-455.09,-2.206,-4.53', max='-417.59,-1.3,-4.18'
 
     """
 
@@ -97,22 +308,15 @@ class ViewNodeGEEMap:
 
     color_palette = knext.StringParameter(
         "Color palette",
-        """Comma-separated color codes for gradient. Supports hex codes with or without # prefix.
-                
-        Common gradient combinations:
-        • Terrain: 000080,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
+        """Comma-separated color codes for gradient. Supports **hex** (6 digits, with or without #) and **CSS color names** (e.g. red, blue, darkgreen). Color names follow the CSS named color dictionary: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
 
+        Common gradient combinations (hex or names):
+        • Terrain: 000080,00FFFF,00FF00,FFFF00,FF0000 or navy,aqua,lime,yellow,red
         • Heatmap: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (blue-cyan-green-yellow-red)
-
         • Vegetation: 8B4513,FFFF00,00FF00 (brown-yellow-green)
+        • Simple: 000000,FFFFFF or black,white
 
-        • Elevation: 000080,00FF00,FFFF00,FF8000,FF0000 (blue-green-yellow-orange-red)
-
-        • Temperature: 0000FF,00FFFF,00FF00,FFFF00,FF0000 (cold to hot)
-        
-        • Simple: 000000,FFFFFF (black to white)
-
-        Examples: '000080,00FF00,FF0000' or '#000080,#00FF00,#FF0000'""",
+        Examples: '000080,00FF00,FF0000' or 'navy,green,red'""",
         default_value="000000,FFFFFF",
     )
 
@@ -123,27 +327,47 @@ class ViewNodeGEEMap:
         min_value=0.0,
         max_value=1.0,
     )
-    # Single band parameters (for manual override)
-    auto_stats = knext.BoolParameter(
-        "Auto statistics",
-        "Automatically calculate min/max values from non-zero pixels",
-        default_value=True,
+    # Statistics mode
+    stats_mode = knext.StringParameter(
+        "Statistics mode",
+        """How to determine visualization ranges:
+        - 'autoMinMax': Automatically calculate min/max for each band independently
+        - 'autoQuartiles': Automatically calculate Q1/Q3 for each band independently (robust to outliers)
+        - 'manual': Manually specify min/max values (single value or comma-separated list per band)""",
+        default_value="autoMinMax",
+        enum=["autoMinMax", "autoQuartiles", "manual"],
         is_advanced=True,
     )
 
-    min_value = knext.DoubleParameter(
-        "Minimum value",
-        "Minimum value for color mapping (ignored if auto statistics is enabled)",
-        default_value=0.0,
+    min_value = knext.StringParameter(
+        "Minimum value(s)",
+        """Minimum value(s) for color mapping. Only used when Statistics mode is 'manual'.
+        
+        Can be a single value (applied to all bands) or comma-separated list (one value per band).
+        
+        Examples:
+        - Single value: '0.0' (all bands use same min)
+        - Per-band values: '-455.09,-2.206,-4.53' (for 3 bands: pc1, pc3, pc4)
+        
+        For RGB visualization, provide 1 value (all bands) or 3 values (one per band).""",
+        default_value="0.0",
         is_advanced=True,
-    ).rule(knext.OneOf(auto_stats, [False]), knext.Effect.SHOW)
+    ).rule(knext.OneOf(stats_mode, ["manual"]), knext.Effect.SHOW)
 
-    max_value = knext.DoubleParameter(
-        "Maximum value",
-        "Maximum value for color mapping (ignored if auto statistics is enabled)",
-        default_value=0.3,
+    max_value = knext.StringParameter(
+        "Maximum value(s)",
+        """Maximum value(s) for color mapping. Only used when Statistics mode is 'manual'.
+        
+        Can be a single value (applied to all bands) or comma-separated list (one value per band).
+        
+        Examples:
+        - Single value: '0.3' (all bands use same max)
+        - Per-band values: '-417.59,-1.3,-4.18' (for 3 bands: pc1, pc3, pc4)
+        
+        For RGB visualization, provide 1 value (all bands) or 3 values (one per band).""",
+        default_value="0.3",
         is_advanced=True,
-    ).rule(knext.OneOf(auto_stats, [False]), knext.Effect.SHOW)
+    ).rule(knext.OneOf(stats_mode, ["manual"]), knext.Effect.SHOW)
 
     # Base map options
     base_map = knext.StringParameter(
@@ -204,11 +428,12 @@ class ViewNodeGEEMap:
             green_band = band_names[1]
             blue_band = band_names[2]
 
-            # Calculate statistics if auto_stats is enabled (for RGB mode)
-            if self.auto_stats:
+            # Calculate statistics based on selected mode (for RGB mode)
+            rgb_bands = [red_band, green_band, blue_band]
+
+            if self.stats_mode == "autoMinMax":
                 try:
-                    # Get image statistics for all three RGB bands
-                    rgb_bands = [red_band, green_band, blue_band]
+                    # Calculate min/max for each band independently
                     stats = (
                         image.select(rgb_bands)
                         .reduceRegion(
@@ -220,17 +445,12 @@ class ViewNodeGEEMap:
                         .getInfo()
                     )
 
-                    # Get min and max across all three bands
+                    # Get min and max for each band independently
                     min_vals = [stats.get(f"{band}_min", 0) for band in rgb_bands]
                     max_vals = [stats.get(f"{band}_max", 0) for band in rgb_bands]
 
-                    # Use the overall min and max across all bands
-                    min_val = min([v for v in min_vals if v is not None])
-                    max_val = max([v for v in max_vals if v is not None])
-
                     # Filter out zero values for better visualization
-                    if min_val == 0:
-                        # Get non-zero minimum across all bands
+                    if any(v == 0 for v in min_vals):
                         non_zero_image = (
                             image.select(rgb_bands)
                             .gt(0)
@@ -244,32 +464,102 @@ class ViewNodeGEEMap:
                         ).getInfo()
 
                         non_zero_min_vals = [
-                            non_zero_stats.get(f"{band}_min", min_val)
-                            for band in rgb_bands
+                            non_zero_stats.get(f"{band}_min", min_vals[i])
+                            for i, band in enumerate(rgb_bands)
                         ]
-                        min_val = min(
-                            [v for v in non_zero_min_vals if v is not None and v > 0]
-                            or [min_val]
-                        )
+                        min_vals = [
+                            v if v > 0 else min_vals[i]
+                            for i, v in enumerate(non_zero_min_vals)
+                        ]
 
-                    # Ensure max is greater than min
-                    if max_val <= min_val:
-                        max_val = min_val + 1 if min_val is not None else 1
+                    # Ensure max > min for each band
+                    for i in range(len(rgb_bands)):
+                        if max_vals[i] <= min_vals[i]:
+                            max_vals[i] = (
+                                min_vals[i] + 1 if min_vals[i] is not None else 1
+                            )
+
+                    min_val = min_vals  # List of 3 values
+                    max_val = max_vals  # List of 3 values
 
                 except Exception as e:
-                    # LOGGER.warning(
-                    #     f"Failed to calculate auto stats for RGB: {e}, using manual values"
-                    # )
-                    min_val = self.min_value
-                    max_val = self.max_value
-            else:
-                min_val = self.min_value
-                max_val = self.max_value
+                    LOGGER.warning(
+                        f"Failed to calculate auto min/max: {e}, using defaults"
+                    )
+                    min_val = [0.0, 0.0, 0.0]
+                    max_val = [0.3, 0.3, 0.3]
+
+            elif self.stats_mode == "autoQuartiles":
+                try:
+                    # Calculate Q1 and Q3 for each band independently
+                    stats = (
+                        image.select(rgb_bands)
+                        .reduceRegion(
+                            reducer=ee.Reducer.percentile([25, 75]),  # Q1 and Q3
+                            geometry=image.geometry(),
+                            scale=1000,
+                            maxPixels=1e9,
+                        )
+                        .getInfo()
+                    )
+
+                    # Get Q1 (p25) and Q3 (p75) for each band independently
+                    min_vals = [stats.get(f"{band}_p25", 0) for band in rgb_bands]  # Q1
+                    max_vals = [stats.get(f"{band}_p75", 0) for band in rgb_bands]  # Q3
+
+                    # Ensure max > min for each band
+                    for i in range(len(rgb_bands)):
+                        if max_vals[i] <= min_vals[i]:
+                            max_vals[i] = (
+                                min_vals[i] + 1 if min_vals[i] is not None else 1
+                            )
+
+                    min_val = min_vals  # List of 3 values
+                    max_val = max_vals  # List of 3 values
+
+                except Exception as e:
+                    LOGGER.warning(
+                        f"Failed to calculate auto quartiles: {e}, using defaults"
+                    )
+                    min_val = [0.0, 0.0, 0.0]
+                    max_val = [0.3, 0.3, 0.3]
+
+            else:  # manual mode
+                # Parse manual values
+                min_str = str(self.min_value).strip()
+                max_str = str(self.max_value).strip()
+
+                min_list = [float(v.strip()) for v in min_str.split(",") if v.strip()]
+                max_list = [float(v.strip()) for v in max_str.split(",") if v.strip()]
+
+                if len(min_list) == 1:
+                    # Single value - apply to all bands
+                    min_val = [min_list[0]] * 3
+                elif len(min_list) == 3:
+                    # Per-band values
+                    min_val = min_list
+                else:
+                    raise ValueError(
+                        f"Min values must be 1 value (for all bands) or 3 values (one per band). "
+                        f"Got {len(min_list)} values: {min_list}"
+                    )
+
+                if len(max_list) == 1:
+                    # Single value - apply to all bands
+                    max_val = [max_list[0]] * 3
+                elif len(max_list) == 3:
+                    # Per-band values
+                    max_val = max_list
+                else:
+                    raise ValueError(
+                        f"Max values must be 1 value (for all bands) or 3 values (one per band). "
+                        f"Got {len(max_list)} values: {max_list}"
+                    )
 
             vis = {
                 "bands": [red_band, green_band, blue_band],
-                "min": min_val,
-                "max": max_val,
+                "min": min_val,  # Can be single value or list of 3 values
+                "max": max_val,  # Can be single value or list of 3 values
                 "opacity": self.alpha,
             }
             # LOGGER.warning(f"RGB mode: {red_band}, {green_band}, {blue_band}, range: {min_val}-{max_val}")
@@ -278,17 +568,13 @@ class ViewNodeGEEMap:
             # Single band mode - use first selected band
             single_band = band_names[0] if band_names else "B1"
 
-            # Parse color palette and ensure all colors have # prefix
+            # Parse color palette (hex or CSS named colors)
             color_list = []
             for color in self.color_palette.split(","):
-                color = color.strip()
-                # Add # prefix if not present
-                if not color.startswith("#"):
-                    color = "#" + color
-                color_list.append(color)
+                color_list.append(_normalize_color_to_hex(color))
 
-            # Calculate statistics if auto_stats is enabled
-            if self.auto_stats:
+            # Calculate statistics based on selected mode
+            if self.stats_mode == "autoMinMax":
                 try:
                     # Get image statistics for the single band
                     stats = (
@@ -325,19 +611,45 @@ class ViewNodeGEEMap:
                         if min_val == 0:  # If still zero, use original min
                             min_val = stats.get(f"{single_band}_min", 0)
 
-                    # LOGGER.warning(
-                    #     f"Auto-calculated stats for {single_band}: min={min_val}, max={max_val}"
-                    # )
+                except Exception as e:
+                    LOGGER.warning(
+                        f"Failed to calculate auto min/max: {e}, using defaults"
+                    )
+                    min_val = 0.0
+                    max_val = 0.3
+
+            elif self.stats_mode == "autoQuartiles":
+                try:
+                    # Calculate Q1 and Q3 for the single band
+                    stats = (
+                        image.select(single_band)
+                        .reduceRegion(
+                            reducer=ee.Reducer.percentile([25, 75]),  # Q1 and Q3
+                            geometry=image.geometry(),
+                            scale=1000,
+                            maxPixels=1e9,
+                        )
+                        .getInfo()
+                    )
+
+                    min_val = stats.get(f"{single_band}_p25", 0)  # Q1
+                    max_val = stats.get(f"{single_band}_p75", 1)  # Q3
 
                 except Exception as e:
-                    # LOGGER.warning(
-                    #     f"Failed to calculate auto stats: {e}, using manual values"
-                    # )
-                    min_val = self.min_value
-                    max_val = self.max_value
-            else:
-                min_val = self.min_value
-                max_val = self.max_value
+                    LOGGER.warning(
+                        f"Failed to calculate auto quartiles: {e}, using defaults"
+                    )
+                    min_val = 0.0
+                    max_val = 0.3
+
+            else:  # manual mode
+                # Parse manual values (use first value if multiple provided)
+                min_str = str(self.min_value).strip()
+                max_str = str(self.max_value).strip()
+                min_list = [float(v.strip()) for v in min_str.split(",") if v.strip()]
+                max_list = [float(v.strip()) for v in max_str.split(",") if v.strip()]
+                min_val = min_list[0] if min_list else 0.0
+                max_val = max_list[0] if max_list else 0.3
 
             vis = {
                 "bands": [single_band],
@@ -365,8 +677,7 @@ class ViewNodeGEEMap:
 
         Map.addLayer(image, vis, "GEE Image")
 
-        # center the map automatically based on image bounds
-        Map.centerObject(image)
+        _center_map_on_object(Map, image)
         # replace css and JavaScript paths
         html = Map.get_root().render()
 
@@ -418,17 +729,21 @@ class ViewNodeGEEImageCollection:
     2. **RGB Mode**: For 3+ selected bands, uses first 3 bands as RGB channels
 
     **Visualization Features**:
-    - **Auto Statistics**: Automatically calculates min/max values from non-zero pixels for optimal visualization
-    - **Manual Control**: Override auto statistics with custom min/max values
-    - **Color Palettes**: Support for custom color gradients using comma-separated hex codes
+    - **Statistics Modes**:
+      - **Auto Min/Max**: Automatically calculates min/max for each band independently
+      - **Auto Quartiles**: Automatically calculates Q1/Q3 for each band independently (robust to outliers)
+      - **Manual**: Manually specify min/max values (single value or comma-separated list per band)
+    - **Per-Band Visualization**: In RGB mode, each band can have independent min/max values
+    - **Color Palettes**: Comma-separated colors as hex or CSS color names (e.g. red, blue). See: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
     - **Transparency**: Adjustable alpha channel for overlay visualization
     - **Base Maps**: Choose from OpenStreetMap, Satellite, Terrain, or Hybrid backgrounds
 
     **Usage**:
     - Specify bands to visualize (e.g., 'B4,B3,B2' for RGB visualization)
     - Leave bands empty to auto-use first available bands
-    - Enable "Auto Statistics" to let the node calculate optimal visualization ranges
-    - Disable "Auto Statistics" to manually set min/max values for precise control
+    - Choose statistics mode: Auto Min/Max (default), Auto Quartiles (robust), or Manual
+    - In Manual mode, provide min/max as single value (all bands) or comma-separated list (per-band)
+    - Example for PCA: bands='pc1,pc3,pc4', mode='manual', min='-455.09,-2.206,-4.53', max='-417.59,-1.3,-4.18'
 
     """
 
@@ -472,26 +787,47 @@ class ViewNodeGEEImageCollection:
         max_value=1.0,
     )
 
-    auto_stats = knext.BoolParameter(
-        "Auto statistics",
-        "Automatically calculate min/max values from non-zero pixels",
-        default_value=True,
+    # Statistics mode
+    stats_mode = knext.StringParameter(
+        "Statistics mode",
+        """How to determine visualization ranges:
+        - 'autoMinMax': Automatically calculate min/max for each band independently
+        - 'autoQuartiles': Automatically calculate Q1/Q3 for each band independently (robust to outliers)
+        - 'manual': Manually specify min/max values (single value or comma-separated list per band)""",
+        default_value="autoMinMax",
+        enum=["autoMinMax", "autoQuartiles", "manual"],
         is_advanced=True,
     )
 
-    min_value = knext.DoubleParameter(
-        "Minimum value",
-        "Minimum value for color mapping (ignored if auto statistics is enabled)",
-        default_value=0.0,
+    min_value = knext.StringParameter(
+        "Minimum value(s)",
+        """Minimum value(s) for color mapping. Only used when Statistics mode is 'manual'.
+        
+        Can be a single value (applied to all bands) or comma-separated list (one value per band).
+        
+        Examples:
+        - Single value: '0.0' (all bands use same min)
+        - Per-band values: '-455.09,-2.206,-4.53' (for 3 bands: pc1, pc3, pc4)
+        
+        For RGB visualization, provide 1 value (all bands) or 3 values (one per band).""",
+        default_value="0.0",
         is_advanced=True,
-    ).rule(knext.OneOf(auto_stats, [False]), knext.Effect.SHOW)
+    ).rule(knext.OneOf(stats_mode, ["manual"]), knext.Effect.SHOW)
 
-    max_value = knext.DoubleParameter(
-        "Maximum value",
-        "Maximum value for color mapping (ignored if auto statistics is enabled)",
-        default_value=3000,
+    max_value = knext.StringParameter(
+        "Maximum value(s)",
+        """Maximum value(s) for color mapping. Only used when Statistics mode is 'manual'.
+        
+        Can be a single value (applied to all bands) or comma-separated list (one value per band).
+        
+        Examples:
+        - Single value: '3000' (all bands use same max)
+        - Per-band values: '-417.59,-1.3,-4.18' (for 3 bands: pc1, pc3, pc4)
+        
+        For RGB visualization, provide 1 value (all bands) or 3 values (one per band).""",
+        default_value="3000",
         is_advanced=True,
-    ).rule(knext.OneOf(auto_stats, [False]), knext.Effect.SHOW)
+    ).rule(knext.OneOf(stats_mode, ["manual"]), knext.Effect.SHOW)
 
     # Base map options
     base_map = knext.StringParameter(
@@ -557,10 +893,12 @@ class ViewNodeGEEImageCollection:
             green_band = band_names[1]
             blue_band = band_names[2]
 
-            # Calculate statistics if auto_stats is enabled (for RGB mode)
-            if self.auto_stats:
+            # Calculate statistics based on selected mode (for RGB mode)
+            rgb_bands = [red_band, green_band, blue_band]
+
+            if self.stats_mode == "autoMinMax":
                 try:
-                    rgb_bands = [red_band, green_band, blue_band]
+                    # Calculate min/max for each band independently
                     stats = (
                         image.select(rgb_bands)
                         .reduceRegion(
@@ -572,13 +910,12 @@ class ViewNodeGEEImageCollection:
                         .getInfo()
                     )
 
+                    # Get min and max for each band independently
                     min_vals = [stats.get(f"{band}_min", 0) for band in rgb_bands]
                     max_vals = [stats.get(f"{band}_max", 0) for band in rgb_bands]
 
-                    min_val = min([v for v in min_vals if v is not None])
-                    max_val = max([v for v in max_vals if v is not None])
-
-                    if min_val == 0:
+                    # Filter out zero values for better visualization
+                    if any(v == 0 for v in min_vals):
                         non_zero_image = (
                             image.select(rgb_bands)
                             .gt(0)
@@ -592,28 +929,102 @@ class ViewNodeGEEImageCollection:
                         ).getInfo()
 
                         non_zero_min_vals = [
-                            non_zero_stats.get(f"{band}_min", min_val)
-                            for band in rgb_bands
+                            non_zero_stats.get(f"{band}_min", min_vals[i])
+                            for i, band in enumerate(rgb_bands)
                         ]
-                        min_val = min(
-                            [v for v in non_zero_min_vals if v is not None and v > 0]
-                            or [min_val]
-                        )
+                        min_vals = [
+                            v if v > 0 else min_vals[i]
+                            for i, v in enumerate(non_zero_min_vals)
+                        ]
 
-                    if max_val <= min_val:
-                        max_val = min_val + 1 if min_val is not None else 1
+                    # Ensure max > min for each band
+                    for i in range(len(rgb_bands)):
+                        if max_vals[i] <= min_vals[i]:
+                            max_vals[i] = (
+                                min_vals[i] + 1 if min_vals[i] is not None else 1
+                            )
+
+                    min_val = min_vals  # List of 3 values
+                    max_val = max_vals  # List of 3 values
 
                 except Exception as e:
-                    min_val = self.min_value
-                    max_val = self.max_value
-            else:
-                min_val = self.min_value
-                max_val = self.max_value
+                    LOGGER.warning(
+                        f"Failed to calculate auto min/max: {e}, using defaults"
+                    )
+                    min_val = [0.0, 0.0, 0.0]
+                    max_val = [3000.0, 3000.0, 3000.0]
+
+            elif self.stats_mode == "autoQuartiles":
+                try:
+                    # Calculate Q1 and Q3 for each band independently
+                    stats = (
+                        image.select(rgb_bands)
+                        .reduceRegion(
+                            reducer=ee.Reducer.percentile([25, 75]),  # Q1 and Q3
+                            geometry=image.geometry(),
+                            scale=1000,
+                            maxPixels=1e9,
+                        )
+                        .getInfo()
+                    )
+
+                    # Get Q1 (p25) and Q3 (p75) for each band independently
+                    min_vals = [stats.get(f"{band}_p25", 0) for band in rgb_bands]  # Q1
+                    max_vals = [stats.get(f"{band}_p75", 0) for band in rgb_bands]  # Q3
+
+                    # Ensure max > min for each band
+                    for i in range(len(rgb_bands)):
+                        if max_vals[i] <= min_vals[i]:
+                            max_vals[i] = (
+                                min_vals[i] + 1 if min_vals[i] is not None else 1
+                            )
+
+                    min_val = min_vals  # List of 3 values
+                    max_val = max_vals  # List of 3 values
+
+                except Exception as e:
+                    LOGGER.warning(
+                        f"Failed to calculate auto quartiles: {e}, using defaults"
+                    )
+                    min_val = [0.0, 0.0, 0.0]
+                    max_val = [3000.0, 3000.0, 3000.0]
+
+            else:  # manual mode
+                # Parse manual values
+                min_str = str(self.min_value).strip()
+                max_str = str(self.max_value).strip()
+
+                min_list = [float(v.strip()) for v in min_str.split(",") if v.strip()]
+                max_list = [float(v.strip()) for v in max_str.split(",") if v.strip()]
+
+                if len(min_list) == 1:
+                    # Single value - apply to all bands
+                    min_val = [min_list[0]] * 3
+                elif len(min_list) == 3:
+                    # Per-band values
+                    min_val = min_list
+                else:
+                    raise ValueError(
+                        f"Min values must be 1 value (for all bands) or 3 values (one per band). "
+                        f"Got {len(min_list)} values: {min_list}"
+                    )
+
+                if len(max_list) == 1:
+                    # Single value - apply to all bands
+                    max_val = [max_list[0]] * 3
+                elif len(max_list) == 3:
+                    # Per-band values
+                    max_val = max_list
+                else:
+                    raise ValueError(
+                        f"Max values must be 1 value (for all bands) or 3 values (one per band). "
+                        f"Got {len(max_list)} values: {max_list}"
+                    )
 
             vis = {
                 "bands": [red_band, green_band, blue_band],
-                "min": min_val,
-                "max": max_val,
+                "min": min_val,  # Can be single value or list of 3 values
+                "max": max_val,  # Can be single value or list of 3 values
                 "opacity": self.alpha,
             }
 
@@ -621,16 +1032,13 @@ class ViewNodeGEEImageCollection:
             # Single band mode
             single_band = band_names[0] if band_names else "B1"
 
-            # Parse color palette
+            # Parse color palette (hex or CSS named colors)
             color_list = []
             for color in self.color_palette.split(","):
-                color = color.strip()
-                if not color.startswith("#"):
-                    color = "#" + color
-                color_list.append(color)
+                color_list.append(_normalize_color_to_hex(color))
 
-            # Calculate statistics if auto_stats is enabled
-            if self.auto_stats:
+            # Calculate statistics based on selected mode
+            if self.stats_mode == "autoMinMax":
                 try:
                     stats = (
                         image.select(single_band)
@@ -665,11 +1073,44 @@ class ViewNodeGEEImageCollection:
                             min_val = stats.get(f"{single_band}_min", 0)
 
                 except Exception as e:
-                    min_val = self.min_value
-                    max_val = self.max_value
-            else:
-                min_val = self.min_value
-                max_val = self.max_value
+                    LOGGER.warning(
+                        f"Failed to calculate auto min/max: {e}, using defaults"
+                    )
+                    min_val = 0.0
+                    max_val = 3000.0
+
+            elif self.stats_mode == "autoQuartiles":
+                try:
+                    # Calculate Q1 and Q3 for the single band
+                    stats = (
+                        image.select(single_band)
+                        .reduceRegion(
+                            reducer=ee.Reducer.percentile([25, 75]),  # Q1 and Q3
+                            geometry=image.geometry(),
+                            scale=1000,
+                            maxPixels=1e9,
+                        )
+                        .getInfo()
+                    )
+
+                    min_val = stats.get(f"{single_band}_p25", 0)  # Q1
+                    max_val = stats.get(f"{single_band}_p75", 1)  # Q3
+
+                except Exception as e:
+                    LOGGER.warning(
+                        f"Failed to calculate auto quartiles: {e}, using defaults"
+                    )
+                    min_val = 0.0
+                    max_val = 3000.0
+
+            else:  # manual mode
+                # Parse manual values (use first value if multiple provided)
+                min_str = str(self.min_value).strip()
+                max_str = str(self.max_value).strip()
+                min_list = [float(v.strip()) for v in min_str.split(",") if v.strip()]
+                max_list = [float(v.strip()) for v in max_str.split(",") if v.strip()]
+                min_val = min_list[0] if min_list else 0.0
+                max_val = max_list[0] if max_list else 3000.0
 
             vis = {
                 "bands": [single_band],
@@ -740,19 +1181,9 @@ class ViewNodeGEEFeatureCollection:
 
     color_palette = knext.StringParameter(
         "Fill color palette",
-        """Comma-separated color codes for feature coloring. Supports hex codes with or without # prefix.
-        
-        Common color combinations:
+        """Comma-separated color codes for feature coloring. Supports **hex** (6 digits, with or without #) and **CSS color names** (e.g. red, blue, darkgreen). Full list: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
 
-        • Default: FF0000,00FF00,0000FF (red-green-blue)
-
-        • Terrain: 8B4513,FFFF00,00FF00 (brown-yellow-green)
-
-        • Political: FF6B6B,4ECDC4,45B7D1,96CEB4,FFEAA7 (red-teal-blue-green-yellow)
-        
-        • Simple: FF0000,0000FF (red-blue)
-
-        Examples: 'FF0000,00FF00,0000FF' or '#FF0000,#00FF00,#0000FF'""",
+        Examples: 'FF0000,00FF00,0000FF' or 'red,green,blue'""",
         default_value="FF0000,00FF00,0000FF",
     )
 
@@ -766,7 +1197,7 @@ class ViewNodeGEEFeatureCollection:
 
     stroke_color = knext.StringParameter(
         "Stroke color",
-        "Hex color code for polygon/line stroke (e.g., '000000' or '#000000')",
+        "Polygon/line stroke color: hex (e.g. 000000 or #000000) or CSS color name (e.g. black). See: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color",
         default_value="000000",
     )
 
@@ -802,6 +1233,29 @@ class ViewNodeGEEFeatureCollection:
         is_advanced=True,
     )
 
+    stats_mode = knext.StringParameter(
+        "Statistics mode",
+        "How to determine min/max for the color scale (numeric color column only): "
+        "autoMinMax (from data), autoQuartiles (Q1–Q3, robust to outliers), or manual (you set min/max).",
+        default_value="autoMinMax",
+        enum=["autoMinMax", "autoQuartiles", "manual"],
+        is_advanced=True,
+    )
+
+    min_value = knext.DoubleParameter(
+        "Minimum value",
+        "Minimum value for color scale. Only used when Statistics mode is 'manual'.",
+        default_value=0.0,
+        is_advanced=True,
+    ).rule(knext.OneOf(stats_mode, ["manual"]), knext.Effect.SHOW)
+
+    max_value = knext.DoubleParameter(
+        "Maximum value",
+        "Maximum value for color scale. Only used when Statistics mode is 'manual'.",
+        default_value=100.0,
+        is_advanced=True,
+    ).rule(knext.OneOf(stats_mode, ["manual"]), knext.Effect.SHOW)
+
     # Base map options
     base_map = knext.StringParameter(
         "Base map",
@@ -823,25 +1277,16 @@ class ViewNodeGEEFeatureCollection:
 
         feature_collection = fc_connection.feature_collection
 
+        # Parse fill palette (hex or CSS named colors)
         color_list = []
         for color in self.color_palette.split(","):
-            color = color.strip()
-            # Add # prefix if not present
-            if not color.startswith("#"):
-                color = "#" + color
-            color_list.append(color)
+            color_list.append(_normalize_color_to_hex(color))
 
-        vis_params = {
-            "color": (
-                self.stroke_color
-                if self.stroke_color.startswith("#")
-                else f"#{self.stroke_color}"
-            ),
-        }
+        stroke_hex = _normalize_color_to_hex(self.stroke_color)
+        vis_params = {"color": stroke_hex}
 
-        palette = [
-            c.strip().lstrip("#") for c in self.color_palette.split(",") if c.strip()
-        ]
+        # For ramp interpolation we need hex without # (RRGGBB)
+        palette = [c.lstrip("#") for c in color_list]
 
         # ---------- build a color ramp from user palette ----------
         def _hex_to_rgb(h):  # 'RRGGBB' -> (r,g,b)
@@ -893,11 +1338,23 @@ class ViewNodeGEEFeatureCollection:
         # Styling function for equal interval classification
 
         def style_by_equal_interval(
-            fc, column, ramp_ee, fill_opacity, base_style, num_classes
+            fc,
+            column,
+            ramp_ee,
+            fill_opacity,
+            base_style,
+            num_classes,
+            vmin_ee=None,
+            vmax_ee=None,
         ):
-            # Dynamic equal interval classification
-            mm = fc.reduceColumns(ee.Reducer.minMax(), [column])  # {'min':..,'max':..}
-            vmin, vmax = ee.Number(mm.get("min")), ee.Number(mm.get("max"))
+            # Use provided min/max or compute from FC
+            if vmin_ee is not None and vmax_ee is not None:
+                vmin = ee.Number(vmin_ee)
+                vmax = ee.Number(vmax_ee)
+            else:
+                mm = fc.reduceColumns(ee.Reducer.minMax(), [column])
+                vmin = ee.Number(mm.get("min"))
+                vmax = ee.Number(mm.get("max"))
             step = vmax.subtract(vmin).divide(ee.Number(num_classes))
 
             def class_index(v):
@@ -932,7 +1389,7 @@ class ViewNodeGEEFeatureCollection:
                 lambda i: vmin.add(step.multiply(i))
             )  # Return break list for legend
 
-        stroke = self.stroke_color.lstrip("#")
+        stroke = stroke_hex.lstrip("#")
         base_style = {
             "color": stroke,
             "width": self.stroke_width,
@@ -967,7 +1424,41 @@ class ViewNodeGEEFeatureCollection:
                 )
 
                 if is_numeric:
-                    # Numeric type: use equal interval classification
+                    # Numeric type: use equal interval classification; get vmin/vmax by stats_mode
+                    vmin_ee, vmax_ee = None, None
+                    if self.stats_mode == "manual":
+                        vmin_ee = ee.Number(self.min_value)
+                        vmax_ee = ee.Number(self.max_value)
+                    elif self.stats_mode == "autoMinMax":
+                        try:
+                            mm = feature_collection.reduceColumns(
+                                ee.Reducer.minMax(), [self.color_column]
+                            ).getInfo()
+                            vmin_ee = ee.Number(mm.get("min", 0))
+                            vmax_ee = ee.Number(mm.get("max", 1))
+                        except Exception as e:
+                            LOGGER.warning(
+                                "Failed to get min/max for %s: %s; using 0 and 1",
+                                self.color_column,
+                                e,
+                            )
+                            vmin_ee = ee.Number(0)
+                            vmax_ee = ee.Number(1)
+                    elif self.stats_mode == "autoQuartiles":
+                        try:
+                            pp = feature_collection.reduceColumns(
+                                ee.Reducer.percentile([25, 75]), [self.color_column]
+                            ).getInfo()
+                            vmin_ee = ee.Number(pp.get("p25", 0))
+                            vmax_ee = ee.Number(pp.get("p75", 1))
+                        except Exception as e:
+                            LOGGER.warning(
+                                "Failed to get quartiles for %s: %s; using 0 and 1",
+                                self.color_column,
+                                e,
+                            )
+                            vmin_ee = ee.Number(0)
+                            vmax_ee = ee.Number(1)
                     styled_img, breaks = style_by_equal_interval(
                         feature_collection,
                         self.color_column,
@@ -975,6 +1466,8 @@ class ViewNodeGEEFeatureCollection:
                         self.fill_opacity,
                         base_style,
                         self.num_classes,
+                        vmin_ee=vmin_ee,
+                        vmax_ee=vmax_ee,
                     )
                     Map.addLayer(
                         styled_img, {}, f"{self.color_column} (equal interval)"

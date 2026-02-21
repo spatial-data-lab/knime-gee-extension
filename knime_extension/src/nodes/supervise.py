@@ -1,7 +1,6 @@
 """
-GEE Supervised Classification Nodes for KNIME
-This module contains nodes for supervised classification using Google Earth Engine Machine Learning APIs.
-Based on: https://developers.google.com/earth-engine/guides/classification
+GEE Classification nodes for KNIME.
+Supervised classification: train classifiers (CART, RF, SVM, etc.) and classify images.
 """
 
 import knime.extension as knext
@@ -23,8 +22,8 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="supervised",
-    name="Classification",
-    description="Google Earth Engine Supervised Classification nodes",
+    name="GEE Classification",
+    description="Supervised classification: train classifiers (CART, RF, SVM, etc.) and classify images.",
     icon="icons/SupervisedClass.png",
     after="sampling",
 )
@@ -473,12 +472,8 @@ class LabelPointsFromImage:
         default_value="",
     )
 
-    scale = knext.IntParameter(
-        "Scale (meters)",
-        "The scale in meters for sampling. Should match the resolution of the reference image.",
-        default_value=30,
-        min_value=1,
-        max_value=10000,
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="The scale in meters for sampling. Should match the resolution of the reference image. Only used when Use NominalScale is disabled.",
     )
 
     num_pixels = knext.IntParameter(
@@ -553,14 +548,18 @@ class LabelPointsFromImage:
                 band_list = feature_image.bandNames().getInfo()
                 LOGGER.warning(f"Using all bands from feature image: {band_list}")
 
+            scale_value = knut.resolve_scale(
+                self.use_nominal_scale, self.scale, feature_image
+            )
+
             # Generate random sample points from reference image
             LOGGER.warning(
-                f"Generating {self.num_pixels} random sample points from reference image at {self.scale}m scale"
+                f"Generating {self.num_pixels} random sample points from reference image (scale={scale_value}m)"
             )
 
             sample_points = reference_image_label.sample(
                 region=sampling_region,
-                scale=self.scale,
+                scale=scale_value,
                 numPixels=self.num_pixels,
                 seed=self.seed,
                 geometries=True,
@@ -574,12 +573,12 @@ class LabelPointsFromImage:
 
             # Extract band values from feature image at these points
             LOGGER.warning(
-                f"Extracting band values from feature image at {self.scale}m scale"
+                f"Extracting band values from feature image (scale={scale_value}m)"
             )
             sampled = feature_image.sampleRegions(
                 collection=sample_points,
                 properties=[label_band],  # Preserve label from reference image
-                scale=self.scale,
+                scale=scale_value,
                 tileScale=1.0,
                 geometries=True,  # Preserve geometry for GeoDataFrame conversion
             )
@@ -732,12 +731,8 @@ class SampleRegionsForClassification:
         default_value="",
     )
 
-    scale = knext.IntParameter(
-        "Scale (meters)",
-        "The scale in meters for sampling. Lower values provide higher resolution but may be slower.",
-        default_value=30,
-        min_value=1,
-        max_value=10000,
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="The scale in meters for sampling. Lower values provide higher resolution but may be slower. Only used when Use NominalScale is disabled.",
     )
 
     tile_scale = knext.DoubleParameter(
@@ -768,6 +763,8 @@ class SampleRegionsForClassification:
             training_fc = fc_connection.feature_collection
             image = image_connection.image
 
+            scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
+
             # Select bands if specified
             if self.bands:
                 band_list = [b.strip() for b in self.bands.split(",")]
@@ -789,12 +786,12 @@ class SampleRegionsForClassification:
             if self.sampling_mode == "Polygon":
                 # Polygon mode: sample all pixels within polygons
                 LOGGER.warning(
-                    f"Polygon mode: Sampling image at {self.scale}m scale with label property: {self.label_property}"
+                    f"Polygon mode: Sampling image (scale={scale_value}m) with label property: {self.label_property}"
                 )
                 sampled = image.sampleRegions(
                     collection=training_fc,
                     properties=[self.label_property],
-                    scale=self.scale,
+                    scale=scale_value,
                     tileScale=self.tile_scale,
                     geometries=True,  # Preserve geometry for GeoDataFrame conversion
                 )
@@ -858,7 +855,7 @@ class SampleRegionsForClassification:
                 sampled = image.sampleRegions(
                     collection=sample_points,
                     properties=[label_prop],
-                    scale=self.scale,
+                    scale=scale_value,
                     tileScale=self.tile_scale,
                     geometries=True,  # Preserve geometry for GeoDataFrame conversion
                 )
@@ -1060,6 +1057,8 @@ class TrainingDataPartitioner:
 )
 class RandomForestLearner:
     """Trains a Random Forest classifier using training data.
+
+    This node trains a Random Forest classifier using Label property, Bands/Features, and tree hyperparameters, and is commonly used for robust land cover classification with many features.
 
     Random Forest is a robust ensemble method that combines multiple decision trees
     to create a strong classifier. It is one of the most popular and effective
@@ -1330,7 +1329,9 @@ class RandomForestLearner:
     port_type=gee_classifier_port_type,
 )
 class CARTLearner:
-    """Trains a CART (Classification and Regression Tree) classifier.
+    """Trains a CART classifier for classification and regression trees.
+
+    This node trains a single decision tree using Label property, Bands/Features, and tree size parameters, and is commonly used when interpretability or fast training is preferred.
 
     CART is a simple, interpretable decision tree algorithm that is fast and
     effective for many classification tasks. It's particularly useful when
@@ -1560,7 +1561,9 @@ class CARTLearner:
     port_type=gee_classifier_port_type,
 )
 class SVMLearner:
-    """Trains a Support Vector Machine (SVM) classifier.
+    """Trains a Support Vector Machine classifier.
+
+    This node trains an SVM using Label property, Bands/Features, and kernel parameters, and is commonly used for high-dimensional feature spaces.
 
     SVM is a powerful algorithm that works well for high-dimensional data and
     can handle non-linear classification through kernel functions.
@@ -1811,10 +1814,12 @@ class SVMLearner:
 class NaiveBayesLearner:
     """Trains a Naive Bayes classifier using SMILE implementation.
 
+    This node trains a Naive Bayes classifier using Label property, Bands/Features, and Lambda smoothing, and is commonly used for fast baseline classification with discrete features.
+
     Naive Bayes is a simple probabilistic classifier based on Bayes' theorem.
     It's fast, requires minimal training data, and works well for many applications.
 
-    **⚠️ Important Feature Requirements:**
+    **Important Feature Requirements:**
 
     - **Non-negative Integer Features**: This implementation requires features to be
       non-negative integers (positive integer feature vectors). Negative values will

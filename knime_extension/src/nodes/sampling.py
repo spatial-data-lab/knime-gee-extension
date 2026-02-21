@@ -9,6 +9,7 @@ from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
     gee_image_port_type,
+    gee_image_collection_port_type,
     gee_feature_collection_port_type,
 )
 
@@ -16,8 +17,8 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="sampling",
-    name="Sampling",
-    description="Google Earth Engine Sampling nodes",
+    name="GEE Sampling",
+    description="Extract pixel values at points, zonal/region statistics, class counts, random sampling.",
     icon="icons/Sampling.png",
     after="visualize",
 )
@@ -105,12 +106,8 @@ class ImageValueByPoint:
         port_index=0,
     )
 
-    scale = knext.IntParameter(
-        "Scale (meters)",
-        "The scale in meters to use for sampling. Lower values provide higher resolution but may be slower.",
-        default_value=30,
-        min_value=1,
-        max_value=10000,
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="The scale in meters to use for sampling. Lower values provide higher resolution but may be slower. Only used when Use NominalScale is disabled.",
     )
 
     batch_size = knext.IntParameter(
@@ -191,6 +188,7 @@ class ImageValueByPoint:
 
         # Use batch processing if dataset is large (auto-detect)
         use_batch = len(gdf) > 1000
+        scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
 
         try:
             if use_batch:
@@ -201,7 +199,7 @@ class ImageValueByPoint:
                     gdf,
                     image,
                     band_names,
-                    self.scale,
+                    scale_value,
                     self.batch_size,
                     LOGGER,
                     exec_context,
@@ -209,7 +207,7 @@ class ImageValueByPoint:
             else:
                 # Direct processing for small datasets
                 band_df = self._extract_values_direct(
-                    gdf, image, band_names, self.scale
+                    gdf, image, band_names, scale_value
                 )
 
             result_df = self._assemble_results(orig_df, band_df, band_names)
@@ -228,7 +226,7 @@ class ImageValueByPoint:
                         gdf,
                         image,
                         band_names,
-                        self.scale,
+                        scale_value,
                         self.batch_size,
                         LOGGER,
                         exec_context,
@@ -529,12 +527,9 @@ class LocalGeoTableReducer:
         enum=ReducerMethodOptions,
     )
 
-    image_scale = knext.IntParameter(
-        "Image scale (meters)",
-        "The scale in meters for zonal statistics calculation",
-        default_value=1000,
-        min_value=1,
-        max_value=10000,
+    use_nominal_scale, image_scale = knut.create_nominal_scale_parameters(
+        default_scale=1000,
+        scale_description="The scale in meters for zonal statistics calculation. Only used when Use NominalScale is disabled.",
     )
 
     batch_boolean = knext.BoolParameter(
@@ -550,6 +545,27 @@ class LocalGeoTableReducer:
         min_value=1,
         max_value=10000,
     ).rule(knext.OneOf(batch_boolean, [True]), knext.Effect.SHOW)
+
+    bands = knext.StringParameter(
+        "Bands (optional)",
+        "Comma-separated band names to reduce; leave empty for all bands.",
+        default_value="",
+        is_advanced=True,
+    )
+
+    crs = knext.StringParameter(
+        "CRS (optional)",
+        "Coordinate reference system (e.g. EPSG:4326). Leave empty to use image default.",
+        default_value="",
+        is_advanced=True,
+    )
+
+    use_unweighted = knext.BoolParameter(
+        "Unweighted reducer",
+        "Use unweighted reducer (pixel center in region only).",
+        default_value=False,
+        is_advanced=True,
+    )
 
     def configure(self, configure_context, input_table_schema, input_binary_spec):
         self.geo_col = knut.column_exists_or_preset(
@@ -572,8 +588,12 @@ class LocalGeoTableReducer:
         import pandas as pd
 
         # Get image directly from connection object
-        # No need to initialize GEE - it's already initialized in the same Python process!
         image = image_connection.image
+
+        bands_param = (self.bands or "").strip()
+        if bands_param:
+            band_list = [b.strip() for b in bands_param.split(",") if b.strip()]
+            image = image.select(band_list)
 
         # Map each reduction method to its corresponding ee.Reducer
         reducer_map = {
@@ -588,15 +608,10 @@ class LocalGeoTableReducer:
         }
 
         # EnumSetParameter returns a list of option names (e.g., ["MEAN", "MIN"])
-        # Convert to lowercase to match reducer_map keys
         reduce_methods = [method.lower() for method in self.reducer_methods]
 
         # Validate reducer methods
-        valid_methods = []
-        for method in reduce_methods:
-            if method in reducer_map:
-                valid_methods.append(method)
-
+        valid_methods = [m for m in reduce_methods if m in reducer_map]
         if not valid_methods:
             raise ValueError("No valid reducer methods provided")
 
@@ -604,6 +619,8 @@ class LocalGeoTableReducer:
         reducers = reducer_map[valid_methods[0]]
         for method in valid_methods[1:]:
             reducers = reducers.combine(reducer2=reducer_map[method], sharedInputs=True)
+        if self.use_unweighted:
+            reducers = reducers.unweighted()
 
         # Create GeoDataFrame
         shp = gp.GeoDataFrame(input_table.to_pandas(), geometry=self.geo_col)
@@ -614,16 +631,23 @@ class LocalGeoTableReducer:
         else:
             shp.to_crs(4326, inplace=True)
 
+        scale_value = knut.resolve_scale(
+            self.use_nominal_scale, self.image_scale, image
+        )
+
         # Process based on batch setting
         if self.batch_boolean:
 
             def process_batch(batch):
                 feature_collection = geemap.gdf_to_ee(batch)
-                stats = image.reduceRegions(
+                params = dict(
                     collection=feature_collection,
                     reducer=reducers,
-                    scale=self.image_scale,
+                    scale=scale_value,
                 )
+                if (self.crs or "").strip():
+                    params["crs"] = (self.crs or "").strip()
+                stats = image.reduceRegions(**params)
                 return geemap.ee_to_gdf(stats)
 
             # Split into batches
@@ -646,9 +670,14 @@ class LocalGeoTableReducer:
             feature_collection = geemap.gdf_to_ee(shp)
 
             # Perform zonal statistics
-            stats = image.reduceRegions(
-                collection=feature_collection, reducer=reducers, scale=self.image_scale
+            params = dict(
+                collection=feature_collection,
+                reducer=reducers,
+                scale=scale_value,
             )
+            if (self.crs or "").strip():
+                params["crs"] = (self.crs or "").strip()
+            stats = image.reduceRegions(**params)
 
             # Convert result to GeoDataFrame
             result_df = geemap.ee_to_gdf(stats)
@@ -750,12 +779,8 @@ class ReduceRegions:
         enum=ReducerMethodOptions,
     )
 
-    scale = knext.IntParameter(
-        "Scale (meters)",
-        "The scale in meters for zonal statistics calculation",
-        default_value=30,
-        min_value=1,
-        max_value=10000,
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="The scale in meters for zonal statistics calculation. Only used when Use NominalScale is disabled.",
     )
 
     tile_scale = knext.DoubleParameter(
@@ -764,6 +789,27 @@ class ReduceRegions:
         default_value=1.0,
         min_value=0.1,
         max_value=16.0,
+        is_advanced=True,
+    )
+
+    bands = knext.StringParameter(
+        "Bands (optional)",
+        "Comma-separated band names to reduce; leave empty for all bands.",
+        default_value="",
+        is_advanced=True,
+    )
+
+    crs = knext.StringParameter(
+        "CRS (optional)",
+        "Coordinate reference system (e.g. EPSG:4326). Leave empty to use image default.",
+        default_value="",
+        is_advanced=True,
+    )
+
+    use_unweighted = knext.BoolParameter(
+        "Unweighted reducer",
+        "Use unweighted reducer (pixel center in region only; default is weighted by overlap).",
+        default_value=False,
         is_advanced=True,
     )
 
@@ -787,20 +833,32 @@ class ReduceRegions:
             image = image_connection.image
             feature_collection = fc_connection.feature_collection
 
+            bands_param = (self.bands or "").strip()
+            if bands_param:
+                band_list = [b.strip() for b in bands_param.split(",") if b.strip()]
+                image = image.select(band_list)
+
             # EnumSetParameter returns a list of option names (e.g., ["MEAN", "MIN"])
             # Convert to lowercase to match reducer_map keys
             reduce_methods = [method.lower() for method in self.reducer_methods]
 
             # Create combined reducer
             reducers = self._create_combined_reducer(reduce_methods)
+            if self.use_unweighted:
+                reducers = reducers.unweighted()
 
-            # Perform reduceRegions
-            stats = image.reduceRegions(
+            scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
+            reduce_params = dict(
                 collection=feature_collection,
                 reducer=reducers,
-                scale=self.scale,
+                scale=scale_value,
                 tileScale=self.tile_scale,
             )
+            if (self.crs or "").strip():
+                reduce_params["crs"] = (self.crs or "").strip()
+
+            # Perform reduceRegions
+            stats = image.reduceRegions(**reduce_params)
 
             LOGGER.warning(
                 f"Successfully calculated zonal statistics using methods: {reduce_methods}"
@@ -845,6 +903,149 @@ class ReduceRegions:
             reducers = reducers.combine(reducer2=reducer_map[method], sharedInputs=True)
 
         return reducers
+
+
+############################################
+# Zonal Statistics (Image Collection)
+############################################
+
+
+@knext.node(
+    name="Feature Collection Reducer (Image Collection)",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ICRegionReducer.png",
+    id="zonalstatsic",
+    after="",
+)
+@knext.input_port(
+    name="GEE Image Collection Connection",
+    description="GEE Image Collection (e.g. time series) to reduce by regions.",
+    port_type=gee_image_collection_port_type,
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection defining regions (e.g. buffered points, polygons).",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection with one feature per region per image (region properties, datetime, reducer statistics). Use Feature Collection to Table to export with or without geometry.",
+    port_type=gee_feature_collection_port_type,
+)
+class ZonalStatisticsIC:
+    """Zonal statistics for each image in an Image Collection over each region.
+
+    This node computes per-region statistics across an Image Collection using Reducer methods,
+    Bands, Scale, and Datetime property settings, and is commonly used to summarize time-series
+    data by polygon or point buffers.
+
+    Same structure as single-image **Feature Collection Reducer**, with one extra column for
+    image datetime. Output is stacked by time (one row per region per image), not column-expanded.
+    """
+
+    reducer_methods = knext.EnumSetParameter(
+        "Reducer methods",
+        "Statistics to compute per region per image.",
+        default_value=ReducerMethodOptions.get_default(),
+        enum=ReducerMethodOptions,
+    )
+
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="Scale in meters for reduceRegions. Only used when Use NominalScale is disabled.",
+    )
+
+    bands = knext.StringParameter(
+        "Bands (optional)",
+        "Comma-separated band names to reduce; leave empty for all bands.",
+        default_value="",
+    )
+
+    datetime_format = knext.StringParameter(
+        "Datetime property name",
+        "Property name for image timestamp in output.",
+        default_value="datetime",
+    )
+
+    include_time = knext.BoolParameter(
+        "Include time (YYYY-MM-dd HH:mm:ss)",
+        "If disabled, output date only (YYYY-MM-dd). If enabled, output date and time.",
+        default_value=False,
+    )
+
+    def configure(self, configure_context, input_schema1, input_schema2):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        ic_connection,
+        fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        ic = ic_connection.image_collection
+        fc = fc_connection.feature_collection
+
+        scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, ic)
+
+        reduce_methods = [m.lower() for m in self.reducer_methods]
+        reducer_map = {
+            "min": ee.Reducer.min(),
+            "mean": ee.Reducer.mean(),
+            "median": ee.Reducer.median(),
+            "max": ee.Reducer.max(),
+            "count": ee.Reducer.count(),
+            "sum": ee.Reducer.sum(),
+            "stddev": ee.Reducer.stdDev(),
+            "variance": ee.Reducer.variance(),
+        }
+        valid = [m for m in reduce_methods if m in reducer_map]
+        if not valid:
+            raise ValueError("No valid reducer methods selected.")
+        reducers = reducer_map[valid[0]]
+        for m in valid[1:]:
+            reducers = reducers.combine(reducer2=reducer_map[m], sharedInputs=True)
+
+        bands_param = (self.bands or "").strip()
+        band_list = (
+            [b.strip() for b in bands_param.split(",") if b.strip()]
+            if bands_param
+            else None
+        )
+
+        def add_datetime_and_reduce(img):
+            if band_list:
+                img = img.select(band_list)
+            reduced = img.reduceRegions(
+                collection=fc,
+                reducer=reducers,
+                scale=scale_value,
+            )
+            t = img.get("system:time_start")
+            pattern = "YYYY-MM-dd HH:mm:ss" if self.include_time else "YYYY-MM-dd"
+            return reduced.map(
+                lambda f: ee.Feature(f).set(
+                    self.datetime_format, ee.Date(t).format(pattern)
+                )
+            )
+
+        empty = ee.FeatureCollection([])
+
+        def step(element, acc):
+            with_date = add_datetime_and_reduce(element)
+            return ee.FeatureCollection(acc).merge(with_date)
+
+        merged = ic.iterate(step, empty)
+        merged = ee.FeatureCollection(merged)
+
+        LOGGER.warning(
+            "Zonal Statistics (Image Collection): output Feature Collection."
+        )
+        return knut.export_gee_feature_collection_connection(merged, fc_connection)
 
 
 ############################################
@@ -932,12 +1133,8 @@ class CountByClass:
         default_value="1,2,3",
     ).rule(knext.OneOf(auto_detect_classes, [False]), knext.Effect.SHOW)
 
-    scale = knext.IntParameter(
-        "Scale (meters)",
-        "The scale in meters for pixel counting",
-        default_value=30,
-        min_value=1,
-        max_value=10000,
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="The scale in meters for pixel counting. Only used when Use NominalScale is disabled.",
     )
 
     tile_scale = knext.DoubleParameter(
@@ -949,12 +1146,10 @@ class CountByClass:
         is_advanced=True,
     )
 
-    max_pixels = knext.IntParameter(
-        "Max pixels",
-        "Maximum number of pixels Earth Engine is allowed to read during the class count (integer ≤ 2,147,483,647).",
+    max_pixels = knut.create_max_pixels_parameter(
         default_value=1000000000,
         min_value=1,
-        is_advanced=True,
+        description="Maximum number of pixels Earth Engine is allowed to read during the class count.",
     )
 
     def configure(self, configure_context, input_schema1, input_schema2):
@@ -976,6 +1171,8 @@ class CountByClass:
             image = image_connection.image
             feature_collection = fc_connection.feature_collection
 
+            scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
+
             band_names = image.bandNames().getInfo()
             if not band_names:
                 raise ValueError("Image has no bands")
@@ -995,7 +1192,7 @@ class CountByClass:
                 try:
                     sample = image_band.sample(
                         region=roi,
-                        scale=self.scale,
+                        scale=scale_value,
                         numPixels=50000,  # Sample more pixels for better coverage
                         seed=42,
                     )
@@ -1025,7 +1222,7 @@ class CountByClass:
                         histogram = image_band.reduceRegion(
                             reducer=ee.Reducer.frequencyHistogram(),
                             geometry=roi,
-                            scale=self.scale,
+                            scale=scale_value,
                             maxPixels=1e9,
                             bestEffort=True,
                         )
@@ -1087,7 +1284,7 @@ class CountByClass:
                     count = specific_category.reduceRegion(
                         reducer=ee.Reducer.sum(),
                         geometry=feature.geometry(),
-                        scale=self.scale,
+                        scale=scale_value,
                         tileScale=self.tile_scale,
                         maxPixels=self.max_pixels,
                     ).get("match")
@@ -1108,4 +1305,284 @@ class CountByClass:
 
         except Exception as e:
             LOGGER.error(f"Count by class failed: {e}")
+            raise
+
+
+############################################
+# Count by Class (Image Collection)
+############################################
+
+
+@knext.node(
+    name="Count by Class (Image Collection)",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "ICCountByClass.png",
+    id="countbyclassic",
+    after="",
+)
+@knext.input_port(
+    name="GEE Image Collection Connection",
+    description="GEE Image Collection of classified images (single band with class codes per image).",
+    port_type=gee_image_collection_port_type,
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection defining regions for pixel counts by class.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection with one feature per region per image (region properties, datetime, class_1, class_2, ...). Use Feature Collection to Table to export with or without geometry.",
+    port_type=gee_feature_collection_port_type,
+)
+class CountByClassIC:
+    """Counts pixels by class for each image in an Image Collection over each region.
+
+    This node counts class-coded pixels using Class codes, Scale, Tile scale, and Datetime settings,
+    and is commonly used to summarize class composition over time by region.
+
+    Same structure as single-image **Count by Class**, with one extra column for image datetime.
+    Output is stacked by time (one row per region per image). Specify class codes manually.
+    """
+
+    category_codes = knext.StringParameter(
+        "Class codes",
+        "Comma-separated list of class codes to count (e.g. '1,2,3,4,5').",
+        default_value="1,2,3",
+    )
+
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="Scale in meters for pixel counting. Only used when Use NominalScale is disabled.",
+    )
+
+    datetime_format = knext.StringParameter(
+        "Datetime property name",
+        "Property name for image timestamp in output.",
+        default_value="datetime",
+    )
+
+    include_time = knext.BoolParameter(
+        "Include time (YYYY-MM-dd HH:mm:ss)",
+        "If disabled, output date only (YYYY-MM-dd). If enabled, output date and time.",
+        default_value=False,
+    )
+
+    tile_scale = knext.DoubleParameter(
+        "Tile scale",
+        "Tile scale for performance (1.0 = default).",
+        default_value=1.0,
+        min_value=0.1,
+        max_value=16.0,
+        is_advanced=True,
+    )
+
+    max_pixels = knut.create_max_pixels_parameter(
+        default_value=1000000000,
+        min_value=1,
+        description="Maximum pixels per reduceRegions call.",
+    )
+
+    def configure(self, configure_context, input_schema1, input_schema2):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        ic_connection,
+        fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        ic = ic_connection.image_collection
+        fc = fc_connection.feature_collection
+
+        scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, ic)
+
+        codes_str = (self.category_codes or "").strip()
+        if not codes_str:
+            raise ValueError("Class codes cannot be empty.")
+        category_codes = [int(c.strip()) for c in codes_str.split(",")]
+
+        empty = ee.FeatureCollection([])
+
+        def step(element, acc):
+            band_name = element.bandNames().get(0)
+            first_band = element.select(band_name)
+            band_list = [
+                first_band.eq(code).rename("class_" + str(code))
+                for code in category_codes
+            ]
+            class_img = ee.Image.cat(band_list)
+            reduce_params = dict(
+                collection=fc,
+                reducer=ee.Reducer.sum(),
+                scale=scale_value,
+                tileScale=self.tile_scale,
+                maxPixels=self.max_pixels,
+            )
+            reduced = class_img.reduceRegions(**reduce_params)
+            t = element.get("system:time_start")
+            pattern = "YYYY-MM-dd HH:mm:ss" if self.include_time else "YYYY-MM-dd"
+            with_date = reduced.map(
+                lambda f: ee.Feature(f).set(
+                    self.datetime_format, ee.Date(t).format(pattern)
+                )
+            )
+            return ee.FeatureCollection(acc).merge(with_date)
+
+        merged = ic.iterate(step, empty)
+        merged = ee.FeatureCollection(merged)
+
+        LOGGER.warning("Count by Class (Image Collection): output Feature Collection.")
+        return knut.export_gee_feature_collection_connection(merged, fc_connection)
+
+
+############################################
+# Image Cluster Sampling
+############################################
+
+
+@knext.node(
+    name="Image Random Sampling",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "RandomSample.png",
+    id="imageclustersampling",
+    after="",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with image to sample random points.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="GEE Feature Collection connection with random sampled points (band values).",
+    port_type=gee_feature_collection_port_type,
+)
+class ImageClusterSampling:
+    """Samples pixels from an image to create random training data.
+
+    This node generates random sample points from an image and extracts band values
+    at these points, creating a FeatureCollection suitable for training clusterers.
+    Unlike supervised classification sampling, this node does not require labels
+    since clustering is unsupervised.
+
+    **Sampling Process:**
+
+    - Generates random sample points within the image geometry
+    - Extracts band values from the image at these points
+    - Output FeatureCollection contains band values as properties
+    - Each feature represents one sampled pixel with all band values
+
+    **Parameters:**
+
+    - **Scale**: Pixel scale in meters (default: 30m, typical for Landsat/Sentinel-2)
+    - **Number of Pixels**: Number of sample points to generate (default: 5000)
+    - **Random Seed**: For reproducible sampling (default: 0, advanced)
+    - **Tile Scale**: Performance optimization for large areas (default: 1.0, higher = faster, advanced)
+
+    **Common Use Cases:**
+
+    - Creating training samples for K-Means clustering
+    - Generating representative samples for X-Means clustering
+    - Exploratory data analysis and pattern discovery
+
+
+    **Reference:**
+    Based on Earth Engine clustering guide: https://developers.google.com/earth-engine/guides/clustering
+    """
+
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        max_value=1000,
+        scale_description="Pixel scale in meters for sampling (e.g., 30 for Landsat, 10 for Sentinel-2). Only used when Use NominalScale is disabled.",
+    )
+
+    num_pixels = knext.IntParameter(
+        "Number of pixels",
+        "Number of sample points to generate for training",
+        default_value=5000,
+        min_value=100,
+        max_value=100000,
+    )
+
+    seed = knext.IntParameter(
+        "Random seed",
+        "Random seed for reproducible sampling",
+        default_value=0,
+        min_value=0,
+        max_value=10000,
+        is_advanced=True,
+    )
+
+    tile_scale = knext.DoubleParameter(
+        "Tile scale",
+        "Tile scale for performance optimization (1.0 = default, higher = faster for large areas)",
+        default_value=1.0,
+        min_value=0.1,
+        max_value=16.0,
+        is_advanced=True,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            # Get image from connection
+            image = image_connection.image
+
+            if not isinstance(image, ee.Image):
+                raise ValueError("Input must be an Image object")
+
+            # Get image geometry for sampling region
+            sampling_region = image.geometry()
+
+            # Get band names
+            band_names = image.bandNames().getInfo()
+            LOGGER.warning(
+                f"Sampling {self.num_pixels} pixels from {len(band_names)} bands: {band_names}"
+            )
+
+            scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
+
+            # Generate random sample points from image
+            LOGGER.warning(
+                f"Generating {self.num_pixels} random sample points (scale={scale_value}m)"
+            )
+
+            sample_points = image.sample(
+                region=sampling_region,
+                scale=scale_value,
+                numPixels=self.num_pixels,
+                seed=self.seed,
+                tileScale=self.tile_scale,  # Performance optimization for large areas
+                geometries=True,  # Preserve geometry for GeoDataFrame conversion
+            )
+
+            try:
+                point_count = sample_points.size().getInfo()
+                LOGGER.warning(f"Successfully sampled {point_count} points from image")
+            except Exception:
+                LOGGER.warning("Sampling completed (size check skipped)")
+
+            return knut.export_gee_feature_collection_connection(
+                sample_points, image_connection
+            )
+
+        except Exception as e:
+            LOGGER.error(f"Image cluster sampling failed: {e}")
             raise

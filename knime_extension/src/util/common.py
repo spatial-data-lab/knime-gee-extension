@@ -388,6 +388,12 @@ class GEEImageCollectionObjectSpec(GoogleEarthEngineObjectSpec):
     pass
 
 
+class GEEArrayObjectSpec(GoogleEarthEngineObjectSpec):
+    """Spec class for GEE Array port type."""
+
+    pass
+
+
 # Image Collection Connection Object
 class GEEImageCollectionConnectionObject(BaseGEEConnectionObject):
     """Connection object specifically for GEE ImageCollection objects."""
@@ -419,6 +425,37 @@ class GEEImageCollectionConnectionObject(BaseGEEConnectionObject):
         return cls(spec, credentials, image_collection)
 
 
+# Array Connection Object
+class GEEArrayConnectionObject(BaseGEEConnectionObject):
+    """Connection object specifically for GEE Array objects."""
+
+    def __init__(
+        self,
+        spec: GoogleEarthEngineObjectSpec,
+        credentials=None,
+        array=None,
+    ):
+        super().__init__(spec, credentials)
+        self._array = array
+
+    @property
+    def array(self):
+        """Get the GEE Array object"""
+        return self._array
+
+    def to_connection_data(self):
+        return {
+            "credentials": self._credentials,
+            "array": self._array,
+        }
+
+    @classmethod
+    def from_connection_data(cls, spec: knext.PortObjectSpec, data):
+        credentials = data.get("credentials") if data else None
+        array = data.get("array") if data else None
+        return cls(spec, credentials, array)
+
+
 # Port types for specialized connection objects
 gee_image_port_type = knext.port_type(
     "GEE Image Port Type",
@@ -448,4 +485,10 @@ gee_image_collection_port_type = knext.port_type(
     "GEE Image Collection Port Type",
     GEEImageCollectionConnectionObject,
     GEEImageCollectionObjectSpec,
+)
+
+gee_array_port_type = knext.port_type(
+    "GEE Array Port Type",
+    GEEArrayConnectionObject,
+    GEEArrayObjectSpec,
 )

@@ -13,8 +13,8 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="authorization",
-    name="Authorization",
-    description="Authorization nodes for Google Earth Engine",
+    name="GEE Authorization",
+    description="Authenticate and connect to Google Earth Engine.",
     icon="icons/authorization.png",
 )
 
@@ -51,13 +51,10 @@ __NODE_ICON_PATH = "icons/icon/authorization/"
     google_earth_engine_port_type,
 )
 class GEEAuthenticate:
-    """Establishes a connection to Google Earth Engine (GEE) with Google Authenticator.
+    """Establishes a connection to Google Earth Engine with Google Authenticator.
 
     This node establishes a connection to Google Earth Engine (GEE) for accessing satellite imagery
-    and geospatial data. To get started with cloud based remote sensing with the Google Earth Engine check out
-    the Fundamentals and Application book at [https://www.eefabook.org/](https://www.eefabook.org/).
-
-    The node supports two authentication methods with Google Authenticator:
+    and geospatial data. The node supports two authentication methods with Google Authenticator:
 
     1. **Interactive Authentication**: Uses your personal Google account credentials
     2. **Service Account Authentication**: Uses a Google Cloud service account JSON key

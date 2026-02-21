@@ -1,6 +1,6 @@
 """
-GEE Image I/O Nodes for KNIME
-This module contains nodes for reading, filtering, and processing Google Earth Engine Images.
+GEE Image nodes for KNIME.
+Single-image I/O and processing: create, read, merge, clip, mask, conditional assignment, export.
 """
 
 import knime.extension as knext
@@ -17,7 +17,7 @@ __category = knext.category(
     path="/community/gee",
     level_id="imageio",
     name="GEE Image",
-    description="Google Earth Engine Image Input/Output and Processing nodes",
+    description="Single-image I/O and processing: create, read, merge, clip, mask, conditional assignment, export.",
     icon="icons/ImageIO.png",
     after="imagecollection",
 )
@@ -50,7 +50,7 @@ __NODE_ICON_PATH = "icons/icon/image/"
     port_type=gee_image_port_type,
 )
 class ImageConstantCreator:
-    """Creates a constant image with a specified value, clipped to a reference image's geometry.
+    """Creates a constant image with a specified value, clipped to a reference image geometry.
 
     This node creates a Google Earth Engine image where all pixels have the same constant value,
     automatically clipped to match the geometry of the reference image. This is more efficient than
@@ -133,8 +133,7 @@ class ImageConstantCreator:
 class ImageReader:
     """Loads a single image from Google Earth Engine using the specified image ID.
 
-    This node allows you to access individual satellite images, elevation data, or other geospatial datasets from GEE's
-    extensive catalog for further analysis in KNIME workflows.
+    This node loads a single GEE image using Image name to select the dataset, and is commonly used as the entry point for single-image workflows.
 
     Visit [GEE Datasets Catalog](https://developers.google.com/earth-engine/datasets/catalog) to explore available
     datasets and their image IDs.
@@ -211,10 +210,7 @@ class ImageReader:
 class ImageBandSelector:
     """Filters and selects specific bands from a Google Earth Engine image.
 
-    This node allows you to filter and select specific bands from a Google Earth Engine image, allowing you to focus
-    on relevant spectral information and reduce data size. This node is useful for preparing images for specific
-    applications like vegetation analysis, water detection, or optimizing processing speed by selecting only necessary
-    bands.
+    This node selects bands using Bands and Use Regex parameters to control which bands are kept, and is commonly used to reduce data size or prepare inputs for band math.
 
     Available bands vary by image source and can be explored using the **GEE Image Info Extractor** node.
 
@@ -227,13 +223,22 @@ class ImageBandSelector:
 
 
     **Note:** If no specified bands are found in the image, the original image is returned unchanged.
+
+    **Use Regex:** When checked, the Bands field is interpreted as a single regular expression (Java regex syntax;
+    matching is done on the GEE server). E.g. ``SR_B.`` or ``SR_B[0-9]`` to match Landsat SR band names.
     """
 
     bands = knext.StringParameter(
         "Bands",
-        """Comma-separated list of band names to select (e.g., 'B1,B2,B3'). Leave empty to keep all bands.
-        Available bands can be explored using the **GEE Image Info Extractor** node.""",
+        "Comma-separated band names (e.g. 'B1,B2,B3'), or a single regex when **Use Regex** is checked. "
+        "Leave empty to keep all bands (when Use Regex is unchecked).",
         default_value="",
+    )
+
+    use_regex = knext.BoolParameter(
+        "Use Regex",
+        "Interpret Bands as a Java regex pattern (matched on the GEE server). Uncheck for comma-separated names.",
+        default_value=False,
     )
 
     def configure(self, configure_context, input_binary_spec):
@@ -248,30 +253,28 @@ class ImageBandSelector:
         import logging
 
         LOGGER = logging.getLogger(__name__)
-
-        # Get image directly from connection object
-        # No need to initialize GEE - it's already initialized in the same Python process!
         image = image_connection.image
+        bands_str = self.bands.strip()
 
-        # Only process if bands parameter is not empty
-        if self.bands.strip():
-            # Get original image info for logging
-
-            # Optimize: only get band names, not full image info
-            original_bands = image.bandNames().getInfo()
-            # LOGGER.warning(f"Original image bands: {original_bands}")
-
-            band_list = [band.strip() for band in self.bands.split(",") if band.strip()]
-        # LOGGER.warning(f"Selecting bands: {band_list}")
-
-        # Filter to only include bands that exist in the image
-        available_bands = [band for band in band_list if band in original_bands]
-        if available_bands:
-            image = image.select(available_bands)
+        if self.use_regex:
+            if not bands_str:
+                LOGGER.warning(
+                    "Use Regex is checked but Bands is empty; returning image unchanged."
+                )
+            else:
+                image = image.select(bands_str)
         else:
-            LOGGER.warning(
-                f"No specified bands found in image. Available bands: {original_bands}"
-            )
+            if bands_str:
+                original_bands = image.bandNames().getInfo()
+                band_list = [b.strip() for b in self.bands.split(",") if b.strip()]
+                available_bands = [b for b in band_list if b in original_bands]
+                if available_bands:
+                    image = image.select(available_bands)
+                else:
+                    LOGGER.warning(
+                        "No specified bands found in image. Available bands: %s",
+                        original_bands,
+                    )
 
         return knut.export_gee_image_connection(image, image_connection)
 
@@ -302,8 +305,7 @@ class ImageBandSelector:
 class ImageBandRenamer:
     """Renames bands in a Google Earth Engine image.
 
-    This node allows you to rename bands in an image, which is essential for
-    organizing multi-temporal data and preparing bands for merging.
+    This node renames bands using Bands to rename and New band names parameters, and is commonly used to standardize band naming before merging or analysis.
 
     **Use Cases:**
 
@@ -441,34 +443,29 @@ class ImageBandRenamer:
 class ImageBandMerger:
     """Merges bands from two images into a single image.
 
-    This node combines bands from two images using Google Earth Engine's
-    addBands() method. You can chain multiple Band Merger nodes to merge
-    more than two images.
+    This node merges a Base Image and Additional Image using Overwrite existing bands to control duplicate handling, and is commonly used to stack bands from multiple sources.
+
+    **Duplicate band names:**
+
+    - **Overwrite existing bands = False (default):** Bands from the additional image that have the same
+      name as a band in the base image are renamed with a numeric suffix (e.g. ``first`` → ``first_1``)
+      so both are kept.
+    - **Overwrite existing bands = True:** Bands from the additional image replace base bands with the
+      same name.
+
+    **Upstream band names:** For predictable merge results, use nodes that set explicit band names
+    (e.g. **Feature Collection to Image** binary → band **mask**; **Distance to Feature Collection** → band **distance**).
 
     **Use Cases:**
 
+    - Merge distance and mask (e.g. Distance to FC + FC to Image) for Band Calculator
     - Combine multi-temporal data (e.g., nighttime lights from different years)
-    - Stack bands from different sources or time periods
-    - Create time series stacks for change detection
-    - Merge computed indices with original imagery
-
-    **Examples:**
-
-    - Merge 1993, 2003, 2013 nighttime lights:
-      First merge: 2013 (base) + 2003 (additional) → merged_2013_2003
-      Second merge: merged_2013_2003 (base) + 1993 (additional) → final merged image
-    - Combine NDVI calculations with original spectral bands
-
-    **Workflow Pattern:**
-
-    1. Use **Band Selector** to select desired bands from each image
-    2. Use **Band Renamer** to rename bands (e.g., 'stable_lights' → '2003')
-    3. Use **Band Merger** to combine images (chain multiple nodes for 3+ images)
+    - Stack bands from different sources; chain multiple Band Merger nodes for 3+ images
     """
 
     overwrite = knext.BoolParameter(
         "Overwrite existing bands",
-        "If True, overwrite bands with the same name. If False, keep both bands (second one gets suffix).",
+        "If True, overwrite base bands with the same name. If False, additional bands that duplicate base names are renamed with a suffix (e.g. first_1) so both are kept.",
         default_value=False,
     )
 
@@ -489,17 +486,34 @@ class ImageBandMerger:
         base_image = base_image_connection.image
 
         try:
-            # Get band names from both images for logging
             base_bands = base_image.bandNames().getInfo()
             additional_image = additional_image_connection.image
             additional_bands = additional_image.bandNames().getInfo()
+            base_set = set(base_bands)
 
-            # Add bands from additional image to base image
+            if not self.overwrite and base_set:
+                # Rename duplicate additional bands with suffix so both base and additional are kept
+                used = set(base_set)
+                new_names = []
+                for b in additional_bands:
+                    if b in base_set:
+                        suffix = 1
+                        while f"{b}_{suffix}" in used:
+                            suffix += 1
+                        new_name = f"{b}_{suffix}"
+                        used.add(new_name)
+                        new_names.append(new_name)
+                    else:
+                        new_names.append(b)
+                        used.add(b)
+                additional_image = additional_image.select(additional_bands).rename(
+                    new_names
+                )
+
             merged_image = base_image.addBands(
                 additional_image, overwrite=self.overwrite
             )
 
-            # Get final band names
             final_bands = merged_image.bandNames().getInfo()
             LOGGER.warning(
                 f"Successfully merged images. Base bands: {base_bands}, "
@@ -510,215 +524,6 @@ class ImageBandMerger:
 
         except Exception as e:
             LOGGER.error(f"Failed to merge image bands: {e}")
-            raise
-
-
-############################################
-# Image Band Calculator
-############################################
-
-
-class BandOperationOptions(knext.EnumParameterOptions):
-    """Options for band calculation operations."""
-
-    ADDITION = ("Addition", "B1 + B2: Add two bands together")
-    SUBTRACTION = ("Subtraction", "B1 - B2 or B2 - B1: Subtract one band from another")
-    MULTIPLICATION = ("Multiplication", "B1 * B2: Multiply two bands")
-    DIVISION = ("Division", "B1 / B2 or B2 / B1: Divide one band by another")
-    NORMALIZED_DIFFERENCE = (
-        "Normalized Difference",
-        "(B1 - B2) / (B1 + B2): Commonly used for indices like NDVI, NDWI",
-    )
-    POWER = ("Power", "B1 ^ B2 or B2 ^ B1: Raise one band to the power of another")
-    MAXIMUM = ("Maximum", "max(B1, B2): Maximum value of the two bands")
-    MINIMUM = ("Minimum", "min(B1, B2): Minimum value of the two bands")
-    MEAN = ("Mean", "(B1 + B2) / 2: Average of the two bands")
-
-    @classmethod
-    def get_default(cls):
-        return cls.NORMALIZED_DIFFERENCE
-
-
-@knext.node(
-    name="GEE Image Band Calculator",
-    node_type=knext.NodeType.MANIPULATOR,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "bandcalculator.png",
-    id="bandcalculator",
-    after="bandmerger",
-)
-@knext.input_port(
-    name="GEE Image Connection",
-    description="GEE Image connection with bands to calculate from.",
-    port_type=gee_image_port_type,
-)
-@knext.output_port(
-    name="GEE Image Connection",
-    description="GEE Image connection with calculated band added.",
-    port_type=gee_image_port_type,
-)
-class ImageBandCalculator:
-    """Performs mathematical operations between two bands and adds the result as a new band.
-
-    This node performs basic mathematical operations between two bands of the same image
-    and adds the calculated result as a new band. This is useful for creating custom
-    indices, ratios, and band combinations.
-
-    **Supported Operations:**
-
-    - **Addition (+):** B1 + B2
-    - **Subtraction (-):** B1 - B2 or B2 - B1
-    - **Multiplication (*):** B1 * B2
-    - **Division (/):** B1 / B2 or B2 / B1
-    - **Normalized Difference:** (B1 - B2) / (B1 + B2) - commonly used for indices like NDVI
-    - **Power (^):** B1 ^ B2 or B2 ^ B1
-    - **Maximum:** max(B1, B2)
-    - **Minimum:** min(B1, B2)
-    - **Mean:** (B1 + B2) / 2
-
-    **Common Use Cases:**
-
-    - Calculate custom vegetation indices
-    - Create band ratios (e.g., NIR/Red ratio)
-    - Compute band differences for change detection
-    - Generate composite indices for classification
-
-    **Examples:**
-
-    - NDVI-like calculation: bands="B8,B4", operation="Normalized Difference", output="ndvi"
-    - NIR/Red ratio: bands="B8,B4", operation="Division" (B8/B4), output="nir_red_ratio"
-    - Band difference: bands="B8,B4", operation="Subtraction" (B8-B4), output="nir_red_diff"
-    """
-
-    bands = knext.StringParameter(
-        "Bands",
-        "Comma-separated list of exactly 2 band names (e.g., 'B8,B4'). The order matters for subtraction and division.",
-        default_value="B8,B4",
-    )
-
-    operation = knext.EnumParameter(
-        label="Operation",
-        description="Mathematical operation to perform between the two bands",
-        default_value=BandOperationOptions.get_default().name,
-        enum=BandOperationOptions,
-    )
-
-    reverse_order = knext.BoolParameter(
-        "Reverse band order",
-        "For subtraction, division, and power: if False, uses B1 - B2, B1 / B2, or B1 ^ B2; if True, uses B2 - B1, B2 / B1, or B2 ^ B1. Ignored for other operations.",
-        default_value=False,
-    ).rule(
-        knext.OneOf(
-            operation,
-            [
-                BandOperationOptions.SUBTRACTION.name,
-                BandOperationOptions.DIVISION.name,
-                BandOperationOptions.POWER.name,
-            ],
-        ),
-        knext.Effect.SHOW,
-    )
-
-    output_band_name = knext.StringParameter(
-        "Output band name",
-        "Name for the calculated band that will be added to the image",
-        default_value="calculated_band",
-    )
-
-    def configure(self, configure_context, input_schema):
-        return None
-
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        image_connection,
-    ):
-        import ee
-        import logging
-
-        LOGGER = logging.getLogger(__name__)
-
-        # Get image from connection
-        image = image_connection.image
-
-        # Parse band names
-        band_list = [b.strip() for b in self.bands.split(",") if b.strip()]
-
-        # Validate exactly 2 bands
-        if len(band_list) != 2:
-            raise ValueError(
-                f"Exactly 2 bands are required. Found {len(band_list)}: {band_list}"
-            )
-
-        band1_name, band2_name = band_list[0], band_list[1]
-
-        # Get available bands
-        available_bands = image.bandNames().getInfo()
-
-        # Validate bands exist
-        if band1_name not in available_bands:
-            raise ValueError(
-                f"Band '{band1_name}' not found in image. Available bands: {available_bands}"
-            )
-        if band2_name not in available_bands:
-            raise ValueError(
-                f"Band '{band2_name}' not found in image. Available bands: {available_bands}"
-            )
-
-        # Select the two bands
-        band1 = image.select(band1_name)
-        band2 = image.select(band2_name)
-
-        # Perform calculation based on operation
-        try:
-            operation_name = self.operation
-
-            if operation_name == BandOperationOptions.ADDITION.name:
-                result = band1.add(band2)
-            elif operation_name == BandOperationOptions.SUBTRACTION.name:
-                if self.reverse_order:
-                    result = band2.subtract(band1)
-                else:
-                    result = band1.subtract(band2)
-            elif operation_name == BandOperationOptions.MULTIPLICATION.name:
-                result = band1.multiply(band2)
-            elif operation_name == BandOperationOptions.DIVISION.name:
-                if self.reverse_order:
-                    result = band2.divide(band1)
-                else:
-                    result = band1.divide(band2)
-            elif operation_name == BandOperationOptions.NORMALIZED_DIFFERENCE.name:
-                # Always use (B1 - B2) / (B1 + B2)
-                result = image.normalizedDifference([band1_name, band2_name])
-            elif operation_name == BandOperationOptions.POWER.name:
-                if self.reverse_order:
-                    result = band2.pow(band1)
-                else:
-                    result = band1.pow(band2)
-            elif operation_name == BandOperationOptions.MAXIMUM.name:
-                result = band1.max(band2)
-            elif operation_name == BandOperationOptions.MINIMUM.name:
-                result = band1.min(band2)
-            elif operation_name == BandOperationOptions.MEAN.name:
-                result = band1.add(band2).divide(2.0)
-            else:
-                raise ValueError(f"Unknown operation: {operation_name}")
-
-            # Rename the result band
-            result = result.rename(self.output_band_name)
-
-            # Add the calculated band to the original image
-            final_image = image.addBands(result)
-
-            LOGGER.warning(
-                f"Successfully calculated {self.output_band_name} using "
-                f"{band1_name} {operation_name} {band2_name}"
-            )
-
-            return knut.export_gee_image_connection(final_image, image_connection)
-
-        except Exception as e:
-            LOGGER.error(f"Band calculation failed: {e}")
             raise
 
 
@@ -751,10 +556,7 @@ class ImageBandCalculator:
 class ImageGetInfo:
     """Displays detailed information about a Google Earth Engine image.
 
-    This node extracts and displays comprehensive metadata about a GEE image including
-    band information, properties, geometry, and other technical details. This is useful
-    for understanding image structure before processing, verifying band names and properties,
-    and debugging image-related issues.
+    This node outputs detailed metadata using Add nominal scale to include per-band resolution, and is commonly used to inspect band names and properties before processing.
 
     **Information Displayed:**
 
@@ -990,10 +792,7 @@ class ImageClip:
 class ImageGeometry:
     """Extracts the geometry from an image and creates a Feature Collection.
 
-    This node extracts the bounding geometry from a Google Earth Engine image using
-    `image.geometry()` and wraps it into a Feature Collection with a single feature.
-    This is useful for using image boundaries in operations that require Feature Collections,
-    such as clipping other images to the same extent.
+    This node extracts image bounds into a Feature Collection with no parameters and is commonly used to create an ROI that matches a reference image.
 
     **Use Cases:**
 
@@ -1068,9 +867,7 @@ class ImageGeometry:
 class ImageExporter:
     """Exports a Google Earth Engine image to Google Drive or Cloud Storage.
 
-    This node submits an Earth Engine export task that writes the image either
-    to a Google Cloud Storage bucket or to Google Drive. You can optionally wait
-    for the export task to finish and monitor progress through the node logs.
+    This node exports an image using Destination mode, path, scale, and wait options to control where and how the image is written, and is commonly used to deliver results outside GEE.
 
     **Destinations:**
 
@@ -1130,12 +927,8 @@ class ImageExporter:
         knext.Effect.SHOW,
     )
 
-    scale = knext.IntParameter(
-        "Scale (meters)",
-        "The scale in meters per pixel for export (lower = higher resolution)",
-        default_value=30,
-        min_value=1,
-        max_value=10000,
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        scale_description="The scale in meters per pixel for export (lower = higher resolution). Only used when Use NominalScale is disabled.",
     )
 
     wait_for_completion = knext.BoolParameter(
@@ -1144,12 +937,10 @@ class ImageExporter:
         default_value=True,
     )
 
-    max_pixels = knext.IntParameter(
-        "Max pixels",
-        "Maximum number of pixels Earth Engine is allowed to read during export (integer ≤ 2,147,483,647).",
+    max_pixels = knut.create_max_pixels_parameter(
         default_value=1000000000,
         min_value=1,
-        is_advanced=True,
+        description="Maximum number of pixels Earth Engine is allowed to read during export.",
     )
 
     max_wait_seconds = knext.IntParameter(
@@ -1176,6 +967,7 @@ class ImageExporter:
         LOGGER = logging.getLogger(__name__)
 
         image = image_connection.image
+        scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
         destination = self.destination or self.DestinationModeOptions.get_default().name
 
         try:
@@ -1189,7 +981,7 @@ class ImageExporter:
         LOGGER.info(
             "Starting image export: destination=%s, scale=%s",
             destination_option.value[0],
-            self.scale,
+            scale_value,
         )
 
         region = image.geometry()
@@ -1283,7 +1075,7 @@ class ImageExporter:
                     bucket=bucket,
                     fileNamePrefix=object_prefix,
                     region=region,
-                    scale=self.scale,
+                    scale=scale_value,
                     maxPixels=self.max_pixels,
                     fileFormat="GeoTIFF",
                 )
@@ -1336,7 +1128,7 @@ class ImageExporter:
             description=description,
             fileNamePrefix=file_prefix,
             region=region,
-            scale=self.scale,
+            scale=scale_value,
             maxPixels=self.max_pixels,
             fileFormat="GeoTIFF",
         )
@@ -1508,11 +1300,20 @@ class GeoTiffToGEEImage:
     port_type=gee_image_port_type,
 )
 class ImageValueFilter:
-    """Filters an image by applying a single-band comparison.
-
-    Choose the band, comparison operator, and threshold. Pixels that satisfy the condition are retained;
-    others are masked (or optionally set to 0).
-    """
+    __doc__ = (
+        "Filters an image by applying a single band comparison.\n\n"
+        "This node filters pixels using Band name, Operator, and Value parameters plus output mode switches, and is commonly used to create masks or thresholded images.\n\n"
+        + knut.IMAGE_VALUE_FILTER_FORMULA
+        + "\n\n**Output modes** (controlled by Retain original values and Set false pixels to 0):\n\n"
+        "• **Mode A** (Retain ✓): Keep original pixel values; pixels not satisfying the condition are masked (transparent). "
+        "Use for visualizing continuous data (e.g. NDVI) only where condition holds.\n\n"
+        "• **Mode B** (Retain ✗, Set false to 0 ✓): Output 0/1 binary image; both 0 and 1 are visible. "
+        "Use to create binary masks for downstream nodes (e.g. mode filter, Mask Apply).\n\n"
+        "• **Mode C** (Retain ✗, Set false to 0 ✗): Output 0/1 binary; only pixels with value 1 are visible, 0 are masked. "
+        "Use to display only the matching region (e.g. mask out non-forest from a thresholded image).\n\n"
+        "• **Mode D** (Retain ✓, Set false to 0 ✓): Keep original values; non-matching pixels are set to 0 (visible). "
+        "Use when you need continuous values and 0 for non-matching (no masking)."
+    )
 
     band_name = knext.StringParameter(
         "Band name",
@@ -1522,20 +1323,26 @@ class ImageValueFilter:
 
     operator = knext.StringParameter(
         "Operator",
-        "Comparison operator to apply.",
+        "Comparison: >=, >, <=, <, ==, != . Pixels satisfying are kept.",
         default_value=">=",
         enum=[">=", ">", "<=", "<", "==", "!="],
     )
 
     threshold = knext.DoubleParameter(
-        "Threshold",
-        "Threshold value for comparison.",
+        "Value",
+        "Value to compare the band against.",
         default_value=0.0,
     )
 
     retain_values = knext.BoolParameter(
         "Retain original values",
-        "If enabled the original pixel value is kept; otherwise filtered pixels are set to 1.",
+        "✓ = Mode A/D: Keep original values (A=mask non-matching, D=set to 0). ✗ = Modes B/C: Output binary 1/0.",
+        default_value=False,
+    )
+
+    set_false_to_zero = knext.BoolParameter(
+        "Set false pixels to 0",
+        "✓ = Mode B/D: Non-matching pixels become 0 (visible). ✗ = Mode A/C: Non-matching pixels are masked.",
         default_value=False,
     )
 
@@ -1576,9 +1383,18 @@ class ImageValueFilter:
 
         mask_image = ops[self.operator](threshold)
 
-        if self.retain_values:
+        if self.retain_values and self.set_false_to_zero:
+            # Mode D: original where true, 0 where false (both visible)
+            base = image_connection.image
+            filtered_image = base.where(mask_image.eq(0), base.multiply(0))
+        elif self.retain_values:
+            # Mode A: original values, non-matching masked
             filtered_image = image_connection.image.updateMask(mask_image)
+        elif self.set_false_to_zero:
+            # Mode B: binary 0/1, both visible
+            filtered_image = mask_image
         else:
+            # Mode C: binary 0/1, only 1 visible
             filtered_image = mask_image.updateMask(mask_image)
 
         LOGGER.warning(
@@ -1592,180 +1408,6 @@ class ImageValueFilter:
 
 
 ############################################
-# Image Morphology
-############################################
-
-
-@knext.node(
-    name="GEE Image Morphology",
-    node_type=knext.NodeType.MANIPULATOR,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "ImageMorphology.png",
-    id="imagemorphology",
-    after="imagevaluefilter",
-)
-@knext.input_port(
-    name="GEE Image Connection",
-    description="GEE Image connection with embedded image object. Input should be a single-band binary image (0 and >0 values).",
-    port_type=gee_image_port_type,
-)
-@knext.output_port(
-    name="GEE Image Connection",
-    description="GEE Image connection with morphology operation applied (binary 0/1 output).",
-    port_type=gee_image_port_type,
-)
-class ImageMorphology:
-    """Applies morphological operations (opening and closing) to a binary image.
-
-    This node performs morphological operations on **binary images** (0 and >0 values).
-    The input is binarized to 0/1 (>0 => 1, else 0) for processing; please ensure
-    your upstream node has produced a binary mask (e.g., via Image Value Filter).
-    The original mask is preserved so morphology will not expand into previously
-    masked-out areas.
-
-    **Morphological Operations:**
-
-    - **Opening**: Erosion followed by dilation. Removes small objects and smooths boundaries.
-    - **Closing**: Dilation followed by erosion. Fills small holes and connects nearby objects.
-
-    **Kernel Types:**
-
-    - **Circle**: Circular kernel (approximated by pixels)
-    - **Square**: Square kernel (3x3, 5x5, etc.)
-
-    **Use Cases:**
-
-    - Remove noise from binary classification results
-    - Fill small holes in segmented regions
-    - Smooth boundaries of classified objects
-    - Clean up binary masks before vectorization
-    - Prepare binary images for further processing
-
-    **Common Workflow:**
-
-    1. Create binary image: Use **Image Value Filter** to create binary mask (e.g., NDVI > 0.5)
-    2. Apply morphology: Use this node to clean up the binary image
-    3. Vectorize: Use **Pixels to Feature Collection** to convert to polygons
-
-    **Note:** Both opening and closing can be applied in sequence. The order matters:
-    - Opening first, then closing: Removes noise then fills holes
-    - Closing first, then opening: Fills holes then removes noise
-    """
-
-    kernel_radius = knext.IntParameter(
-        "Kernel radius (pixels)",
-        "Radius of the morphological kernel in pixels. A radius of 1 creates a 3x3 kernel, radius of 2 creates a 5x5 kernel, etc.",
-        default_value=1,
-        min_value=1,
-        max_value=10,
-    )
-
-    kernel_shape = knext.StringParameter(
-        "Kernel shape",
-        "Shape of the morphological kernel.",
-        default_value="circle",
-        enum=["circle", "square"],
-    )
-
-    do_open = knext.BoolParameter(
-        "Apply opening",
-        "If enabled, applies opening operation (erosion followed by dilation). Removes small objects and smooths boundaries.",
-        default_value=False,
-    )
-
-    do_close = knext.BoolParameter(
-        "Apply closing",
-        "If enabled, applies closing operation (dilation followed by erosion). Fills small holes and connects nearby objects.",
-        default_value=False,
-    )
-
-    output_band_name = knext.StringParameter(
-        "Output band name",
-        "Name of the output morphology band (0/1).",
-        default_value="morph",
-    )
-
-    def configure(self, configure_context, input_schema):
-        return None
-
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        image_connection,
-    ):
-        import ee
-        import logging
-
-        LOGGER = logging.getLogger(__name__)
-
-        # Get image from connection
-        image = image_connection.image
-
-        # Validate that at least one operation is enabled
-        if not self.do_open and not self.do_close:
-            raise ValueError(
-                "At least one morphological operation must be enabled (opening or closing)."
-            )
-
-        try:
-            # Keep original mask so we don't expand into masked-out regions
-            original_mask = image.mask()
-
-            # Step 1: Binarize to 0/1
-            # Preserve existing mask; >0 => 1, otherwise 0
-            bin01 = image.gt(0).rename("bin01")  # 0/1 with original mask
-
-            # Step 2: Define kernel
-            if self.kernel_shape == "circle":
-                # Approximate circular kernel (True means include center)
-                kernel = ee.Kernel.circle(self.kernel_radius, "pixels", True)
-            else:
-                # Default square kernel (3x3, 5x5...)
-                kernel = ee.Kernel.square(self.kernel_radius, "pixels", True)
-
-            # Step 3: Apply morphological operations
-            out = bin01
-
-            if self.do_open:
-                # Opening: erosion (min) followed by dilation (max)
-                out = out.focal_min(self.kernel_radius, kernel=kernel).focal_max(
-                    self.kernel_radius, kernel=kernel
-                )
-                LOGGER.warning(
-                    f"Applied opening operation with {self.kernel_shape} kernel (radius={self.kernel_radius})"
-                )
-
-            if self.do_close:
-                # Closing: dilation (max) followed by erosion (min)
-                out = out.focal_max(self.kernel_radius, kernel=kernel).focal_min(
-                    self.kernel_radius, kernel=kernel
-                )
-                LOGGER.warning(
-                    f"Applied closing operation with {self.kernel_shape} kernel (radius={self.kernel_radius})"
-                )
-
-            # Ensure output is 0/1 (focal operations should maintain 0/1, but explicit normalization is safer)
-            morph01 = (
-                out.gt(0)
-                .rename(self.output_band_name)
-                .toByte()
-                .updateMask(original_mask)
-            )  # 0 or 1, with original mask
-
-            LOGGER.warning(
-                f"Successfully applied morphology: opening={self.do_open}, closing={self.do_close}, "
-                f"kernel={self.kernel_shape}, radius={self.kernel_radius}, "
-                f"output_band={self.output_band_name}"
-            )
-
-            return knut.export_gee_image_connection(morph01, image_connection)
-
-        except Exception as e:
-            LOGGER.error(f"Morphology operation failed: {e}")
-            raise
-
-
-############################################
 # Image Mask Apply
 ############################################
 
@@ -1776,7 +1418,7 @@ class ImageMorphology:
     category=__category,
     icon_path=__NODE_ICON_PATH + "imageMask.png",
     id="imagemaskapply",
-    after="imagevaluefilter",
+    after="imagemultibandcalculator",
 )
 @knext.input_port(
     name="Base Image",
@@ -1794,33 +1436,12 @@ class ImageMorphology:
     port_type=gee_image_port_type,
 )
 class ImageMaskApply:
-    """Applies a mask to an image using `.updateMask()` operation.
-
-    This node implements Google Earth Engine's `.updateMask()` functionality, which masks out
-    pixels in the base image where the mask image has zero values. Non-zero values in the mask
-    image indicate pixels that should be retained.
-
-    **Operation:**
-
-    - **Base Image**: The image to mask
-    - **Mask Image**: The image used as a mask (typically a boolean or binary image)
-    - **Mask Band**: The band from mask image to use (if mask has multiple bands)
-    - Result: Base image with pixels masked where mask band equals 0
-
-    **Use Cases:**
-
-    - Apply boolean masks created from threshold operations
-    - Combine multiple masks (e.g., vegetation mask AND cloud mask)
-    - Filter image based on classification results
-    - Remove unwanted pixels based on criteria
-
-    **Common Workflow:**
-
-    1. Create boolean mask: Use **Image Value Filter** to create a boolean mask (e.g., NDVI > 0.5)
-    2. Extract mask: Use **Image Value Filter** again to extract specific values (e.g., mask == 1)
-    3. Apply mask: Use **Image Mask Apply** to apply the mask to the original image
-
-    """
+    __doc__ = (
+        "Applies a mask to an image using updateMask: pixels where mask is 0 are masked out and non-zero retained.\n\n"
+        "This node applies a mask using Mask band name to select the mask band, and is commonly used to apply QA masks or binary masks to an image.\n\n"
+        "**Operation:** Base image × Mask image (one band); result = base with pixels masked where mask band == 0.\n\n"
+        "**Common workflow:** " + knut.MASK_APPLY_WORKFLOW_EXAMPLE
+    )
 
     mask_band = knext.StringParameter(
         "Mask band name",
@@ -1927,11 +1548,9 @@ class ConditionalOperatorOptions(knext.EnumParameterOptions):
     port_type=gee_image_port_type,
 )
 class ImageConditionalAssignment:
-    """Applies conditional value assignment using `.where()` operation.
+    """Applies conditional value assignment using where operation.
 
-    This node implements Google Earth Engine's `.where()` functionality, which conditionally
-    replaces pixel values in the base image based on conditions derived from another image.
-    When a condition is true, pixels in the base image are replaced with a specified value.
+    This node assigns values using Condition band name, Operator, Threshold, and Replacement value parameters, and is commonly used for rule-based classification or re-coding.
 
     **Operation:**
 
@@ -2058,7 +1677,7 @@ class ImageConditionalAssignment:
 
 
 ############################################
-# Pixels To Feature Collection
+# Pixels To Feature Collection (Image to Feature Collection)
 ############################################
 
 
@@ -2072,19 +1691,28 @@ class ImageConditionalAssignment:
 )
 @knext.input_port(
     name="GEE Image Connection",
-    description="GEE Image connection with embedded (binary) image object.",
+    description="GEE Image connection (binary mask or categorical band to vectorize).",
     port_type=gee_image_port_type,
 )
 @knext.output_port(
     name="GEE Feature Collection Connection",
-    description="GEE Feature Collection connection with extracted polygons.",
+    description="GEE Feature Collection connection with extracted polygons (and optional class property).",
     port_type=gee_feature_collection_port_type,
 )
 class PixelsToFeatureCollection:
-    """Vectorizes selected pixels and optionally merges them.
+    """Vectorizes image pixels to polygons. Supports binary masks or categorical bands.
 
-    The input image should be binary (mask or values 0/1). Regions where the band equals 1
-    are converted into polygons. Optional unary union merges all polygons into a single MultiPolygon.
+    This node vectorizes pixels using Band name, Mode, and scale or union options to control polygon creation, and is commonly used to convert masks or classes into vector features.
+
+    **Binary mode:** Input band is treated as 0/1 mask; non-zero pixels become polygons. Optional unary
+    union merges all into one MultiPolygon (e.g. for single-region extraction).
+
+    **Categorical mode:** Each distinct pixel value becomes a separate polygon; output features get a
+    property (label) with the class value (e.g. elevation zones, forest loss year). Optional focalMode
+    smooths the raster before vectorizing to reduce small isolated polygons.
+
+    **Shared options:** Scale, maxPixels, eight-connected, and tile scale (use 2–4 if you
+    get timeouts on large or high-resolution rasters). Output geometry is always polygon.
     """
 
     band_name = knext.StringParameter(
@@ -2093,35 +1721,98 @@ class PixelsToFeatureCollection:
         default_value="",
     )
 
-    scale = knext.IntParameter(
-        "Vectorization scale (meters)",
-        "Resolution in meters to use when tracing polygons.",
-        default_value=30,
-        min_value=1,
-        max_value=1000,
+    vectorize_mode = knext.StringParameter(
+        "Mode",
+        "Binary: 0/1 mask, one region or union. Categorical: preserve class values per polygon (e.g. zones, loss year).",
+        default_value="binary",
+        enum=["binary", "categorical"],
     )
 
-    max_pixels = knext.IntParameter(
-        "Max pixels",
-        "Maximum number of pixels Earth Engine is allowed to process during vectorization (integer ≤ 2,147,483,647).",
+    label_property = knext.StringParameter(
+        "Label property name",
+        "Feature property name for the pixel (class) value in categorical mode.",
+        default_value="label",
+    ).rule(knext.OneOf(vectorize_mode, ["categorical"]), knext.Effect.SHOW)
+
+    use_focal_mode = knext.BoolParameter(
+        "Smooth with focalMode before vectorizing",
+        "Apply focalMode to reduce small isolated polygons (categorical mode). Uses kernel radius in pixels.",
+        default_value=False,
+    ).rule(knext.OneOf(vectorize_mode, ["categorical"]), knext.Effect.SHOW)
+
+    focal_mode_radius = knext.IntParameter(
+        "FocalMode kernel radius (pixels)",
+        "Kernel radius for focalMode smoothing (e.g. 4 for 9x9 neighborhood).",
+        default_value=4,
+        min_value=1,
+        max_value=20,
+        is_advanced=True,
+    ).rule(
+        knext.And(
+            knext.OneOf(vectorize_mode, ["categorical"]),
+            knext.OneOf(use_focal_mode, [True]),
+        ),
+        knext.Effect.SHOW,
+    )
+
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        max_value=1000,
+        scale_description="Resolution in meters to use when tracing polygons. Only used when Use NominalScale is disabled.",
+    )
+
+    max_pixels = knut.create_max_pixels_parameter(
         default_value=1000000000,
         min_value=1,
+        description="Maximum number of pixels Earth Engine is allowed to process during vectorization.",
+    )
+
+    tile_scale = knext.IntParameter(
+        "Tile scale",
+        "Scaling factor for aggregation tile size (1–16). Use 2 or 4 if you get timeouts or memory errors on large or high-resolution rasters.",
+        default_value=1,
+        min_value=1,
+        max_value=16,
         is_advanced=True,
     )
 
     apply_union = knext.BoolParameter(
         "Apply unary union",
-        "If enabled, the resulting polygons are dissolved into a single MultiPolygon feature.",
+        "If enabled, the resulting polygons are dissolved into a single MultiPolygon feature (binary mode only).",
         default_value=True,
-    )
+    ).rule(knext.OneOf(vectorize_mode, ["binary"]), knext.Effect.SHOW)
+
+    apply_union_per_class = knext.BoolParameter(
+        "Apply union per class",
+        "If enabled, polygons with the same label are dissolved into one MultiPolygon per class (fewer, larger features).",
+        default_value=False,
+    ).rule(knext.OneOf(vectorize_mode, ["categorical"]), knext.Effect.SHOW)
 
     union_error_margin = knext.DoubleParameter(
         "Union error margin (meters)",
-        "Error margin used when dissolving polygons (only when union is enabled).",
+        "Error margin used when dissolving polygons (binary unary union or categorical union per class).",
         default_value=1.0,
         min_value=0.1,
         is_advanced=True,
-    ).rule(knext.OneOf(apply_union, [True]), knext.Effect.SHOW)
+    ).rule(
+        knext.Or(
+            knext.And(
+                knext.OneOf(vectorize_mode, ["binary"]),
+                knext.OneOf(apply_union, [True]),
+            ),
+            knext.And(
+                knext.OneOf(vectorize_mode, ["categorical"]),
+                knext.OneOf(apply_union_per_class, [True]),
+            ),
+        ),
+        knext.Effect.SHOW,
+    )
+
+    eight_connected = knext.BoolParameter(
+        "Eight-connected",
+        "Use 8-connectedness for grouping pixels (default 4-connected).",
+        default_value=False,
+        is_advanced=True,
+    )
 
     def configure(self, configure_context, input_schema):
         return None
@@ -2146,35 +1837,83 @@ class PixelsToFeatureCollection:
         except Exception as exc:
             raise ValueError(f"Band '{band}' not found in image: {exc}")
 
-        mask = single_band.updateMask(single_band)
+        geom = image.geometry()
+        scale = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
+        max_pixels = self.max_pixels
 
-        LOGGER.warning(
-            "Vectorizing band '%s' at scale %s m (maxPixels=%s, union=%s)",
-            band,
-            self.scale,
-            self.max_pixels,
-            self.apply_union,
-        )
-
-        vectors = mask.reduceToVectors(
-            geometry=image.geometry(),
-            scale=self.scale,
-            maxPixels=self.max_pixels,
-        )
-
-        if self.apply_union:
-            dissolved_geometry = vectors.geometry().dissolve(
-                maxError=self.union_error_margin
+        if self.vectorize_mode == "binary":
+            mask = single_band.updateMask(single_band)
+            LOGGER.warning(
+                "Vectorizing band '%s' (binary) at scale %s m (maxPixels=%s, union=%s)",
+                band,
+                scale,
+                max_pixels,
+                self.apply_union,
             )
-            dissolved = ee.FeatureCollection(
-                ee.Feature(
-                    dissolved_geometry,
-                    {"source": "pixels_to_feature_collection"},
+            vectors = mask.reduceToVectors(
+                geometry=geom,
+                scale=scale,
+                maxPixels=max_pixels,
+                geometryType="polygon",
+                eightConnected=self.eight_connected,
+                tileScale=self.tile_scale,
+            )
+            if self.apply_union:
+                dissolved_geometry = vectors.geometry().dissolve(
+                    maxError=self.union_error_margin
                 )
-            )
-            output_fc = dissolved
+                dissolved = ee.FeatureCollection(
+                    ee.Feature(
+                        dissolved_geometry,
+                        {"source": "pixels_to_feature_collection"},
+                    )
+                )
+                output_fc = dissolved
+            else:
+                output_fc = vectors
         else:
-            output_fc = vectors
+            # Categorical: optionally smooth then reduceToVectors with label
+            to_vectorize = single_band
+            if self.use_focal_mode:
+                to_vectorize = single_band.focalMode(
+                    radius=self.focal_mode_radius,
+                    kernelType="square",
+                )
+                to_vectorize = to_vectorize.reproject(single_band.projection())
+                LOGGER.warning(
+                    "Applied focalMode (radius=%s) before vectorizing.",
+                    self.focal_mode_radius,
+                )
+            LOGGER.warning(
+                "Vectorizing band '%s' (categorical) at scale %s m (labelProperty=%s, unionPerClass=%s)",
+                band,
+                scale,
+                self.label_property,
+                self.apply_union_per_class,
+            )
+            vectors = to_vectorize.reduceToVectors(
+                geometry=geom,
+                scale=scale,
+                maxPixels=max_pixels,
+                geometryType="polygon",
+                labelProperty=self.label_property,
+                eightConnected=self.eight_connected,
+                tileScale=self.tile_scale,
+            )
+            if self.apply_union_per_class:
+                # One feature per class: dissolve all polygons with same label into one MultiPolygon
+                label_prop = self.label_property
+                err_margin = self.union_error_margin
+                distinct_labels = vectors.aggregate_array(label_prop).distinct()
+
+                def make_feature(label):
+                    sub = vectors.filter(ee.Filter.eq(label_prop, label))
+                    dissolved = sub.geometry().dissolve(maxError=err_margin)
+                    return ee.Feature(dissolved, {label_prop: label})
+
+                output_fc = ee.FeatureCollection(distinct_labels.map(make_feature))
+            else:
+                output_fc = vectors
 
         return knut.export_gee_feature_collection_connection(
             output_fc, image_connection

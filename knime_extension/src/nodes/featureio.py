@@ -1,6 +1,6 @@
 """
-GEE Feature Collection I/O Nodes for KNIME
-This module contains nodes for reading, filtering, clipping, and processing Google Earth Engine Feature Collections.
+GEE Feature Collection nodes for KNIME.
+Feature collection I/O and processing: read, filter, clip, export.
 """
 
 import knime.extension as knext
@@ -9,6 +9,7 @@ from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
     gee_feature_collection_port_type,
+    gee_image_port_type,
 )
 
 # Category for GEE Feature Collection I/O nodes
@@ -16,9 +17,9 @@ __category = knext.category(
     path="/community/gee",
     level_id="featureio",
     name="Feature Collection",
-    description="Google Earth Engine Feature Collection Input/Output and Processing nodes",
+    description="Feature collection I/O and processing: read, filter, clip, export.",
     icon="icons/featureIO.png",
-    after="imageio",
+    after="authorization",
 )
 
 # Node icon path
@@ -194,6 +195,7 @@ class GEEFeatureCollectionFilter:
         "Maximum number of features to return (-1 = no limit).",
         default_value=-1,
         min_value=-1,
+        is_advanced=True,
     )
 
     def configure(self, configure_context, input_schema):
@@ -344,6 +346,52 @@ class GEEFeatureCollectionFilter:
 
 
 ############################################
+# GEE Feature Collection to Point
+############################################
+
+
+@knext.node(
+    name="Feature Collection to Point",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "FCtoPoint.png",
+    id="fctopoint",
+    after="valuefilter",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection (polygons, lines, or points) to convert to points.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection with point geometry (one centroid per feature).",
+    port_type=gee_feature_collection_port_type,
+)
+class GEEFeatureCollectionToPoint:
+    """Replace each feature's geometry with its centroid, one point per feature.
+
+    **This node replaces each feature geometry with its centroid and is commonly used
+    to convert polygons or lines into representative points for sampling or joins.
+    """
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, fc_connection):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+        fc = fc_connection.feature_collection
+        result = fc.map(lambda f: f.setGeometry(f.geometry().centroid()))
+        LOGGER.warning(
+            "Feature Collection to Point: geometry set to centroid per feature."
+        )
+        return knut.export_gee_feature_collection_connection(result, fc_connection)
+
+
+############################################
 # GEE Feature Collection Spatial Filter
 ############################################
 
@@ -354,7 +402,7 @@ class GEEFeatureCollectionFilter:
     category=__category,
     icon_path=__NODE_ICON_PATH + "spatialFilter.png",
     id="spatialfilter",
-    after="valuefilter",
+    after="fctopoint",
 )
 @knext.input_port(
     name="Input Feature Collection",
@@ -372,12 +420,10 @@ class GEEFeatureCollectionFilter:
     port_type=gee_feature_collection_port_type,
 )
 class GEEFeatureCollectionSpatialFilter:
-    """
-    Performs powerful spatial filtering and clipping on Feature Collections based on precise geometric relationships.
+    """Performs spatial filtering and clipping on Feature Collections.
 
-    This node provides comprehensive spatial analysis capabilities for Feature Collections, supporting various
-    geometric relationships and operations. It is useful for spatial data analysis, geographic filtering,
-    and geometric operations on vector data.
+    This node filters features using Spatial operator and Distance parameters and is
+    commonly used to select features that intersect, contain, or lie within a distance of a boundary.
 
     **Spatial Operations:**
 
@@ -506,8 +552,876 @@ class GEEFeatureCollectionSpatialFilter:
 
 
 ############################################
-# Feature Collection Info Extractor
+# Feature Collection Join (Spatial Join)
 ############################################
+
+
+@knext.node(
+    name="Feature Collection Join",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "FCJoin.png",
+    id="fcjoin",
+    after="spatialfilter",
+)
+@knext.input_port(
+    name="Primary Feature Collection",
+    description="The primary Feature Collection (e.g. blocks, polygons).",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.input_port(
+    name="Secondary Feature Collection",
+    description="The secondary Feature Collection to join (e.g. roads, points).",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Joined Feature Collection with matches according to join type.",
+    port_type=gee_feature_collection_port_type,
+)
+class FeatureCollectionJoin:
+    """Spatial join of two Feature Collections such as blocks within 1 km of highways or points in polygons.
+
+    This node performs a spatial join between a primary and secondary Feature Collection using Spatial filter, Distance, and Join type parameters, and is commonly used to attach nearby features or count relationships.
+
+    **Parameters:**
+    - **Spatial filter:**
+      - **withinDistance**: match secondary features within Distance of primary geometry.
+      - **intersects**: match secondary features that intersect primary geometry.
+    - **Distance (meters):** maximum search distance for withinDistance; ignored for intersects.
+    - **Join type:**
+      - **simple**: keep primary features that have at least one match.
+      - **saveAll**: attach a list of all matching secondary features to each primary feature.
+    - **Matches property name:** name of the property that stores matches for saveAll.
+    - **Max error (meters):** spatial tolerance; larger values can speed up geometry operations.
+
+    **Common Use Cases:**
+    - Count points in polygons (e.g., schools per district).
+    - Find polygons within a buffer of roads or rivers.
+    - Attach nearby facilities to administrative units.
+
+    **Performance Notes:**
+    - Use **intersects** when boundaries overlap; use **withinDistance** only when proximity is required.
+    - Smaller Distance and larger Max error generally improve performance.
+    - Simplify or dissolve inputs upstream to reduce geometry complexity.
+
+    **Usage Notes:**
+    - For counts with saveAll, use **Feature Collection Calculator** with `size(matches)` to create a count property.
+    - The output stays as a Feature Collection; convert to table only if the collection is small.
+
+    """
+
+    join_filter = knext.StringParameter(
+        "Spatial filter",
+        "Condition for matching: within distance (meters) or intersects.",
+        default_value="withinDistance",
+        enum=["withinDistance", "intersects"],
+    )
+
+    distance_meters = knext.DoubleParameter(
+        "Distance (meters)",
+        "Maximum distance for withinDistance filter. Ignored for intersects.",
+        default_value=1000.0,
+        min_value=0.0,
+    ).rule(knext.OneOf(join_filter, ["withinDistance"]), knext.Effect.SHOW)
+
+    join_type = knext.StringParameter(
+        "Join type",
+        "Simple: keep primary features that have at least one match. Save-all: add a property with list of matches.",
+        default_value="simple",
+        enum=["simple", "saveAll"],
+    )
+
+    matches_key = knext.StringParameter(
+        "Matches property name",
+        "Property name for the list of matching secondary features (save-all join only).",
+        default_value="matches",
+    ).rule(knext.OneOf(join_type, ["saveAll"]), knext.Effect.SHOW)
+
+    max_error = knext.DoubleParameter(
+        "Max error (meters)",
+        "Spatial filter tolerance; larger values can speed up computation.",
+        default_value=10.0,
+        min_value=0.0,
+        is_advanced=True,
+    )
+
+    def configure(self, configure_context, input_schema1, input_schema2):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        primary_fc_connection,
+        secondary_fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        primary = primary_fc_connection.feature_collection
+        secondary = secondary_fc_connection.feature_collection
+
+        if self.join_filter == "withinDistance":
+            the_filter = ee.Filter.withinDistance(
+                leftField=".geo",
+                rightField=".geo",
+                distance=self.distance_meters,
+                maxError=self.max_error,
+            )
+        else:
+            the_filter = ee.Filter.intersects(
+                leftField=".geo",
+                rightField=".geo",
+                maxError=self.max_error,
+            )
+
+        if self.join_type == "saveAll":
+            join = ee.Join.saveAll(
+                matchesKey=self.matches_key,
+            )
+            result = join.apply(primary, secondary, the_filter)
+        else:
+            join = ee.Join.simple()
+            result = join.apply(primary, secondary, the_filter)
+
+        LOGGER.warning(
+            "Feature Collection Join applied: filter=%s, joinType=%s",
+            self.join_filter,
+            self.join_type,
+        )
+        return knut.export_gee_feature_collection_connection(
+            result, primary_fc_connection
+        )
+
+
+############################################
+# Feature Collection Calculator (expression → new property)
+############################################
+
+
+def _tokenize_fc_calc_expression(s):
+    """Tokenize FC Calculator expression: numbers, identifiers, size(id), + - * / ( )."""
+    tokens = []
+    i = 0
+    s = s.strip()
+    while i < len(s):
+        if s[i].isspace():
+            i += 1
+            continue
+        if s[i] in "()+*-/":
+            sym = {
+                "(": "LPAREN",
+                ")": "RPAREN",
+                "+": "PLUS",
+                "-": "MINUS",
+                "*": "STAR",
+                "/": "SLASH",
+            }[s[i]]
+            tokens.append((sym, None))
+            i += 1
+            continue
+        if s[i].isdigit() or (s[i] == "." and i + 1 < len(s) and s[i + 1].isdigit()):
+            j = i
+            if s[j] == ".":
+                j += 1
+            while j < len(s) and (s[j].isdigit() or s[j] == "."):
+                j += 1
+            try:
+                num = float(s[i:j])
+                tokens.append(("NUMBER", num))
+            except ValueError:
+                raise ValueError(f"Invalid number: {s[i:j]!r}")
+            i = j
+            continue
+        if s[i].isalpha() or s[i] == "_":
+            j = i
+            while j < len(s) and (s[j].isalnum() or s[j] == "_"):
+                j += 1
+            ident = s[i:j]
+            tokens.append(("SIZE" if ident.lower() == "size" else "IDENT", ident))
+            i = j
+            continue
+        raise ValueError(f"Unexpected character: {s[i]!r}")
+    return tokens
+
+
+def _parse_fc_calc_expression(expression):
+    """Parse FC Calculator expression into AST. Raises ValueError on error."""
+    tokens = _tokenize_fc_calc_expression(expression)
+    if not tokens:
+        raise ValueError("Expression is empty")
+    pos = [0]
+
+    def peek():
+        if pos[0] >= len(tokens):
+            return (None, None)
+        return tokens[pos[0]]
+
+    def consume():
+        t = peek()
+        pos[0] += 1
+        return t
+
+    def parse_expr():
+        left = parse_term()
+        while True:
+            typ, _ = peek()
+            if typ == "PLUS":
+                consume()
+                right = parse_term()
+                left = ("BINOP", "+", left, right)
+            elif typ == "MINUS":
+                consume()
+                right = parse_term()
+                left = ("BINOP", "-", left, right)
+            else:
+                break
+        return left
+
+    def parse_term():
+        left = parse_factor()
+        while True:
+            typ, _ = peek()
+            if typ == "STAR":
+                consume()
+                right = parse_factor()
+                left = ("BINOP", "*", left, right)
+            elif typ == "SLASH":
+                consume()
+                right = parse_factor()
+                left = ("BINOP", "/", left, right)
+            else:
+                break
+        return left
+
+    def parse_factor():
+        typ, val = consume()
+        if typ == "NUMBER":
+            return ("NUMBER", val)
+        if typ == "IDENT":
+            return ("IDENT", val)
+        if typ == "LPAREN":
+            node = parse_expr()
+            t, _ = consume()
+            if t != "RPAREN":
+                raise ValueError("Missing ')'")
+            return node
+        if typ == "SIZE":
+            t2, _ = consume()
+            if t2 != "LPAREN":
+                raise ValueError("size() requires opening parenthesis")
+            ident_typ, ident_val = consume()
+            if ident_typ != "IDENT":
+                raise ValueError("size(propertyName) requires a property name")
+            t3, _ = consume()
+            if t3 != "RPAREN":
+                raise ValueError("Missing ')' after size(propertyName)")
+            return ("SIZE", ident_val)
+        raise ValueError(f"Unexpected token: {typ}")
+
+    ast = parse_expr()
+    if pos[0] != len(tokens):
+        raise ValueError("Unexpected tokens at end of expression")
+    return ast
+
+
+def _codegen_fc_calc(ast):
+    """Generate Python expression string that builds ee object from feature f. Uses ee and f."""
+    if ast[0] == "NUMBER":
+        return f"ee.Number({ast[1]})"
+    if ast[0] == "IDENT":
+        name = ast[1]
+        return f"ee.Number(f.get({repr(name)}))"
+    if ast[0] == "SIZE":
+        name = ast[1]
+        return f"ee.List(f.get({repr(name)})).size()"
+    if ast[0] == "BINOP":
+        _, op, left, right = ast
+        a = _codegen_fc_calc(left)
+        b = _codegen_fc_calc(right)
+        if op == "+":
+            return f"({a}).add({b})"
+        if op == "-":
+            return f"({a}).subtract({b})"
+        if op == "*":
+            return f"({a}).multiply({b})"
+        if op == "/":
+            return f"({a}).divide({b})"
+    raise ValueError(f"Unknown AST node: {ast[0]}")
+
+
+@knext.node(
+    name="Feature Collection Calculator",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "FCCalculator.png",
+    id="fccalculator",
+    after="fcjoin",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection to add a computed property to.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection with the new property added to each feature.",
+    port_type=gee_feature_collection_port_type,
+)
+class FeatureCollectionCalculator:
+    __doc__ = (
+        "Add a computed property to each feature using an expression similar to Band Calculator for features.\n\n"
+        "This node computes a new property using Expression and Output property name parameters and is commonly used for densities, ratios, or derived attributes.\n\n"
+        "**Parameters:**\n"
+        "- **Expression:** Formula using feature properties and helpers.\n"
+        "- **Output property name:** Name of the new attribute.\n\n"
+        "**Usage notes:**\n"
+        "- Use Feature Collection Geometry Calculator to add area/length before computing densities.\n\n"
+        + knut.FC_CALC_EXPRESSION_SYMBOLS_AND_EXAMPLES
+    )
+
+    expression = knext.StringParameter(
+        "Expression",
+        "Expression using feature property names. "
+        + knut.FC_CALC_EXPRESSION_SYMBOLS
+        + " Examples: pop10 / area_sq_mi, size(trees).",
+        default_value="pop10 / area_sq_mi",
+    )
+
+    output_property_name = knext.StringParameter(
+        "Output property name",
+        "Name of the property to set with the computed value.",
+        default_value="pop_density",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        expression = (self.expression or "").strip()
+        output_name = (self.output_property_name or "calculated").strip()
+        if not expression:
+            raise ValueError("Expression is required.")
+        if not output_name:
+            raise ValueError("Output property name is required.")
+
+        try:
+            ast = _parse_fc_calc_expression(expression)
+            expr_code = _codegen_fc_calc(ast)
+        except ValueError as e:
+            raise ValueError(f"Invalid expression: {e}") from e
+
+        mapper_code = (
+            "def _mapper(f):\n"
+            "  f = ee.Feature(f)\n"
+            f"  return f.set({repr(output_name)}, {expr_code})\n"
+        )
+        scope = {"ee": ee}
+        exec(mapper_code, scope)
+        _mapper = scope["_mapper"]
+
+        fc = fc_connection.feature_collection
+        result = fc.map(_mapper)
+
+        LOGGER.warning(
+            "Feature Collection Calculator: output property '%s'",
+            output_name,
+        )
+        return knut.export_gee_feature_collection_connection(result, fc_connection)
+
+
+############################################
+# Feature Collection Geometry Calculator
+############################################
+
+
+class _GeometryAttributesOptions(knext.EnumParameterOptions):
+    """Which geometry-derived attributes to add (multi-select)."""
+
+    AREA = ("Area", "Add area (in selected unit)")
+    LENGTH = ("Length", "Add length (in selected unit)")
+    PERIMETER = ("Perimeter", "Add perimeter (in selected unit)")
+    LATITUDE = ("Latitude", "Add centroid latitude (degrees WGS84)")
+    LONGITUDE = ("Longitude", "Add centroid longitude (degrees WGS84)")
+
+    @classmethod
+    def get_default(cls):
+        return [cls.AREA.name]
+
+
+class _GeometryUnitOptions(knext.EnumParameterOptions):
+    """Unit for area, length, and perimeter."""
+
+    METER = ("Meter", "Area in m², length/perimeter in m")
+    KILOMETER = ("Kilometer", "Area in km², length/perimeter in km")
+    MILE = ("Mile", "Area in sq mi, length/perimeter in mi")
+
+    @classmethod
+    def get_default(cls):
+        return cls.METER
+
+
+@knext.node(
+    name="Feature Collection Geometry Calculator",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "FCGeometry.png",
+    id="fcgeometrycalculator",
+    after="fccalculator",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection to add geometry attributes to.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection with added geometry attributes.",
+    port_type=gee_feature_collection_port_type,
+)
+class FeatureCollectionGeometryCalculator:
+    """Add geometry-derived attributes to each feature: area, length, perimeter, and/or centroid latitude/longitude.
+
+    This node adds geometry attributes using Attributes to add and Unit parameters and is commonly used to compute area, length, or centroid coordinates for further analysis.
+
+    **Parameters:**
+    - **Attributes to add:** Area, length, perimeter, latitude, longitude.
+    - **Unit:** Unit for area, length, and perimeter.
+
+    **Usage notes:**
+    - Latitude and longitude are derived from centroid coordinates.
+    - **Attributes** (multi-select): Area, Length, Perimeter use the chosen **Unit** (meter, kilometer, mile).
+    - **Latitude** and **Longitude** are always in degrees (WGS84), from the feature geometry centroid.
+
+    - **Default property names:** ``area``, ``length``, ``perimeter``, ``latitude``, ``longitude``.
+    Use with **Feature Collection Calculator** e.g. ``pop10 / area`` for density when unit is Mile (area in sq mi).
+    """
+
+    attributes = knext.EnumSetParameter(
+        "Attributes to add",
+        "Select one or more geometry-derived attributes. Lat/Lon are centroid coordinates in degrees.",
+        default_value=_GeometryAttributesOptions.get_default(),
+        enum=_GeometryAttributesOptions,
+    )
+
+    unit = knext.EnumParameter(
+        "Unit",
+        "Unit for area, length, and perimeter. Latitude and longitude are always in degrees.",
+        default_value=_GeometryUnitOptions.get_default().name,
+        enum=_GeometryUnitOptions,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        fc = fc_connection.feature_collection
+        # EnumSetParameter returns a list of option names (e.g. ["AREA", "LENGTH"])
+        selected = self.attributes or _GeometryAttributesOptions.get_default()
+        if not isinstance(selected, list):
+            selected = [selected] if selected else []
+        unit_name = self.unit or _GeometryUnitOptions.get_default().name
+
+        # Scale factors: GEE returns area in m², length/perimeter in m
+        if unit_name == _GeometryUnitOptions.METER.name:
+            area_scale = 1.0
+            length_scale = 1.0
+        elif unit_name == _GeometryUnitOptions.KILOMETER.name:
+            area_scale = 1.0 / 1e6  # m² -> km²
+            length_scale = 1.0 / 1000  # m -> km
+        else:  # MILE
+            area_scale = 1.0 / 2.589988e6  # m² -> sq mi
+            length_scale = 1.0 / 1609.344  # m -> mi
+
+        add_area = _GeometryAttributesOptions.AREA.name in selected
+        add_length = _GeometryAttributesOptions.LENGTH.name in selected
+        add_perimeter = _GeometryAttributesOptions.PERIMETER.name in selected
+        add_lat = _GeometryAttributesOptions.LATITUDE.name in selected
+        add_lon = _GeometryAttributesOptions.LONGITUDE.name in selected
+
+        def mapper(f):
+            f = ee.Feature(f)
+            geom = f.geometry()
+            out = f
+            if add_area:
+                out = out.set(
+                    "area",
+                    ee.Number(geom.area()).multiply(area_scale),
+                )
+            if add_length:
+                out = out.set(
+                    "length",
+                    ee.Number(geom.length()).multiply(length_scale),
+                )
+            if add_perimeter:
+                out = out.set(
+                    "perimeter",
+                    ee.Number(geom.perimeter()).multiply(length_scale),
+                )
+            if add_lat:
+                # centroid().coordinates() is [lon, lat] in degrees
+                lat = ee.Number(geom.centroid().coordinates().get(1))
+                out = out.set("latitude", lat)
+            if add_lon:
+                lon = ee.Number(geom.centroid().coordinates().get(0))
+                out = out.set("longitude", lon)
+            return out
+
+        result = fc.map(mapper)
+        LOGGER.warning(
+            "Feature Collection Geometry Calculator: attributes=%s, unit=%s",
+            selected,
+            unit_name,
+        )
+        return knut.export_gee_feature_collection_connection(result, fc_connection)
+
+
+############################################
+# Feature Collection to Image (Rasterize)
+############################################
+
+
+@knext.node(
+    name="Feature Collection to Image",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "FCtoImage.png",
+    id="fctoimage",
+    after="fcgeometrycalculator",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection to rasterize (e.g. polygons to mask or property image).",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection (rasterized mask or property values).",
+    port_type=gee_image_port_type,
+)
+class FeatureCollectionToImage:
+    """Rasterizes a Feature Collection to an Image using reduceToImage. Binary mask or property values per pixel.
+
+    This node rasterizes features using Output mode, Property name, and Scale parameters and is commonly used to create masks or ID rasters from polygons.
+
+    **Parameters:**
+    - **Output:** binary mask or property image.
+    - **Property name:** Numeric property to burn when using property mode.
+    - **Scale:** Output pixel size in meters.
+    - **Expand zeros to buffer area / Mask mode / Buffer distance:** Optional extent and mask controls.
+
+    **Usage notes:**
+    - Binary mode outputs band **mask**; property mode uses the property name.
+    - **Binary mask:** Output 1 where a polygon intersects the pixel, 0 elsewhere (e.g. protected area mask).
+    - **Property image:** Output the value of the given property for the polygon that covers the pixel (e.g. unique ID).
+
+    Requires a reference geometry or scale for the output grid; use the bounds of the FC and the scale parameter.
+
+    - Optional: expand the output extent by a buffer to keep explicit 0s in the buffer area.
+    - Optional: invert or force mask values in binary mode.
+
+    **Output band name:** Binary mode uses band **mask**; property mode uses the selected property name as the band name.
+    Use band **mask** in Band Calculator or Band Merger (e.g. with Distance to FC output **distance**) without name clashes.
+    """
+
+    output_mode = knext.StringParameter(
+        "Output",
+        "Binary mask (1/0) or image from a numeric property (e.g. unique ID).",
+        default_value="binary",
+        enum=["binary", "property"],
+    )
+
+    property_name = knext.StringParameter(
+        "Property name",
+        "Numeric property to use as pixel value (e.g. WDPA_PID, zone_id). Used when Output is property.",
+        default_value="",
+    ).rule(knext.OneOf(output_mode, ["property"]), knext.Effect.SHOW)
+
+    scale = knext.IntParameter(
+        "Scale (meters)",
+        "Pixel size of the output image.",
+        default_value=500,
+        min_value=1,
+        max_value=10000,
+    )
+
+    expand_to_buffer = knext.BoolParameter(
+        "Expand zeros to buffer area",
+        "If enabled, expand the output extent by a buffer so areas outside the FC get explicit 0 values.",
+        default_value=False,
+    )
+
+    mask_mode = knext.StringParameter(
+        "Mask mode",
+        "Binary mask polarity: inside=1/outside=0, inverted, or all ones. Only when expanding to buffer.",
+        default_value="inside",
+        enum=["inside", "inverted", "all_ones"],
+    ).rule(knext.OneOf(expand_to_buffer, [True]), knext.Effect.SHOW)
+
+    buffer_distance = knext.IntParameter(
+        "Buffer distance (meters)",
+        "Buffer distance in meters when expanding the output extent.",
+        default_value=1000,
+        min_value=1,
+    ).rule(knext.OneOf(expand_to_buffer, [True]), knext.Effect.SHOW)
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        fc = fc_connection.feature_collection
+
+        if self.output_mode == "binary":
+            # Add a constant property 'mask' = 1, then reduceToImage with first non-null
+            fc_masked = fc.map(lambda f: ee.Feature(f).set("mask", 1))
+            image = fc_masked.reduceToImage(
+                properties=["mask"],
+                reducer=ee.Reducer.first(),
+            )
+            image = image.unmask(0).rename("mask")
+            if self.mask_mode == "inverted":
+                image = image.eq(0).rename("mask")
+            elif self.mask_mode == "all_ones":
+                image = image.multiply(0).add(1).rename("mask")
+        else:
+            prop = (self.property_name or "").strip()
+            if not prop:
+                raise ValueError("Property name is required for property output.")
+            image = fc.reduceToImage(
+                properties=[prop],
+                reducer=ee.Reducer.first(),
+            )
+            image = image.unmask(0)
+
+        # Clip to FC bounds (optionally expand by buffer) and set scale for downstream use
+        bounds = fc.geometry()
+        if self.expand_to_buffer:
+            clip_geom = bounds.buffer(self.buffer_distance)
+        else:
+            clip_geom = bounds
+
+        image = image.clip(clip_geom).reproject(crs="EPSG:4326", scale=self.scale)
+
+        LOGGER.warning(
+            "Feature Collection rasterized: mode=%s, scale=%s m, maskMode=%s, expand=%s, buffer=%s m",
+            self.output_mode,
+            self.scale,
+            self.mask_mode if self.output_mode == "binary" else "n/a",
+            self.expand_to_buffer,
+            self.buffer_distance if self.expand_to_buffer else 0,
+        )
+        return knut.export_gee_image_connection(image, fc_connection)
+
+
+############################################
+# Buffer Points
+############################################
+
+
+@knext.node(
+    name="Buffer Features",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "FCBuffer.png",
+    id="bufferpoints",
+    after="fctoimage",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection of points, polygons, or lines to buffer.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection with buffered geometries (circles or square bounds).",
+    port_type=gee_feature_collection_port_type,
+)
+class BufferFeatures:
+    """Buffers each feature by a distance in meters. Output can be circular buffers or square bounds.
+
+    This node buffers features using Buffer radius and Output square bounds parameters and is commonly used to create sample plots or distance-based zones.
+
+    **Parameters:**
+    - **Buffer radius:** Distance in meters.
+    - **Output square bounds:** Use square bounds instead of circular buffers.
+
+    **Usage notes:**
+    - Works for points, lines, and polygons.
+
+    Works for points (e.g. plot centers), polygons (e.g. expand protected area), or lines.
+    Use with **Feature Collection Reducer** or **Local Region Reducer** for zonal statistics.
+    """
+
+    buffer_radius = knext.DoubleParameter(
+        "Buffer radius (meters)",
+        "Distance for buffer (radius of circle or half-side of square).",
+        default_value=50.0,
+        min_value=0.1,
+    )
+
+    use_bounds = knext.BoolParameter(
+        "Output square bounds",
+        "If enabled, output rectangular bounds of the buffer (square); otherwise circular polygon.",
+        default_value=False,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        fc = fc_connection.feature_collection
+
+        def buffer_feature(f):
+            geom = ee.Feature(f).geometry()
+            buffered = geom.buffer(self.buffer_radius)
+            if self.use_bounds:
+                buffered = buffered.bounds()
+            return ee.Feature(buffered).copyProperties(f, exclude=["geometry"])
+
+        result = fc.map(buffer_feature)
+        LOGGER.warning(
+            "Buffered features: radius=%s m, squareBounds=%s",
+            self.buffer_radius,
+            self.use_bounds,
+        )
+        return knut.export_gee_feature_collection_connection(result, fc_connection)
+
+
+############################################
+# Distance to Feature Collection
+############################################
+
+
+@knext.node(
+    name="Distance to Feature Collection",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "DistToFC.png",
+    id="distancetofc",
+    after="bufferpoints",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection whose boundary is used to compute distance (e.g. protected area).",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection: each pixel value is distance (meters) to the FC boundary.",
+    port_type=gee_image_port_type,
+)
+class DistanceToFeatureCollection:
+    """Creates an image whose **distance** band is the distance in meters from each cell to the FC polygon boundary.
+
+    This node builds a distance-to-boundary raster using Scale and Max distance parameters and is commonly used for proximity analysis, buffer modeling, and distance-based weighting.
+
+    **Parameters:**
+    - **Scale (meters):** Output pixel size for the distance image.
+    - **Max distance (meters):** Maximum distance from the boundary to include; pixels farther away are masked.
+
+    **Common Use Cases:**
+    - Distance to protected area boundary for risk or accessibility modeling.
+    - Distance to rivers/roads (after converting them to a Feature Collection).
+    - Create distance decay inputs for suitability or cost surfaces.
+
+    **Performance Notes:**
+    - Smaller Scale and larger Max distance increase computation.
+    - Clip or simplify the input Feature Collection to reduce geometry complexity.
+
+    **Usage Notes:**
+    - Output band name is **distance** in meters.
+    - Output is masked beyond Max distance and reprojected to EPSG:4326 at the chosen Scale.
+    - Combine with **Feature Collection to Image** mask in Band Merger so Band Calculator can use `distance` and `mask` together.
+    """
+
+    scale = knext.IntParameter(
+        "Scale (meters)",
+        "Pixel size of the output distance image.",
+        default_value=500,
+        min_value=1,
+        max_value=5000,
+    )
+
+    max_distance = knext.IntParameter(
+        "Max distance (meters)",
+        "Only cells within this distance from the boundary have a value; beyond this, pixels are masked.",
+        default_value=50000,
+        min_value=100,
+        is_advanced=True,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        fc_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        fc = fc_connection.feature_collection
+        bounds = fc.geometry()
+
+        # Extent = polygon buffered by max_distance (only these cells).
+        # FeatureCollection.distance(): each pixel = distance in meters to nearest polygon boundary.
+        # Pixels beyond searchRadius stay masked; we do not fill them.
+        dist_image = fc.distance(
+            searchRadius=self.max_distance,
+            maxError=50,
+        )
+        dist_image = dist_image.rename("distance").clip(
+            bounds.buffer(self.max_distance)
+        )
+        dist_image = dist_image.reproject(crs="EPSG:4326", scale=self.scale)
+
+        LOGGER.info(
+            "Distance to Feature Collection: scale=%s m, maxDistance=%s m",
+            self.scale,
+            self.max_distance,
+        )
+        return knut.export_gee_image_connection(dist_image, fc_connection)
 
 
 @knext.node(
@@ -525,28 +1439,12 @@ class GEEFeatureCollectionSpatialFilter:
 )
 @knext.output_table(
     name="Feature Collection Info Extractor Table",
-    description="Table containing property names, types, and geometry information",
+    description="Table containing property names, types, geometry type, and number of features",
 )
 class GEEFeatureCollectionInfo:
     """Displays property information about a Google Earth Engine Feature Collection in table format.
 
-    This node extracts and displays property names, their data types, and geometry type
-    from a Feature Collection in a structured table format. This is useful for data
-    exploration, understanding the structure of your vector data, and selecting
-    appropriate properties for further processing.
-
-    **Information Displayed:**
-
-    - **Property Names**: All available property/attribute names
-    - **Property Types**: Data types of each property (string, number, boolean, etc.)
-    - **Geometry Type**: Type of geometries in the collection
-
-    **Use Cases:**
-
-    - Explore and understand new datasets
-    - Verify data structure before analysis
-    - Select appropriate properties for filtering or visualization
-    - Check data quality and completeness
+    This node lists property names, types, geometry type, and feature count with no parameters and is commonly used to inspect Feature Collections before filtering or calculations.
     """
 
     def configure(self, configure_context, input_schema):
@@ -565,61 +1463,43 @@ class GEEFeatureCollectionInfo:
         feature_collection = fc_connection.feature_collection
 
         try:
-            # --- Optimized Server-Side Analysis ---
-
-            # 1. Get a reference to the first feature without downloading it
             first_feature = feature_collection.first()
-
-            # 2. Get property names and geometry type as server-side objects
             prop_names = first_feature.propertyNames()
             geom_type = first_feature.geometry().type()
 
-            # 3. Define a server-side function to get the type of a property
             def get_prop_type(prop_name):
-                prop_value = first_feature.get(prop_name)
-                # ee.Algorithms.ObjectType efficiently gets the type as a string
-                return ee.Algorithms.ObjectType(prop_value)
+                return ee.Algorithms.ObjectType(first_feature.get(prop_name))
 
-            # 4. Map the function over the property names to get a list of types
-            prop_types = prop_names.map(get_prop_type)
-
-            # 5. Combine names and types into a server-side dictionary
-            properties_info = ee.Dictionary.fromLists(prop_names, prop_types)
-
-            # 6. Combine everything into a final dictionary for one single download
-            all_info = ee.Dictionary(
-                {"properties": properties_info, "geometry_type": geom_type}
+            properties_info = ee.Dictionary.fromLists(
+                prop_names, prop_names.map(get_prop_type)
             )
+            result_info = ee.Dictionary(
+                {"properties": properties_info, "geometry_type": geom_type}
+            ).getInfo()
 
-            # 7. Make ONE fast getInfo() call to download the small summary
-            result_info = all_info.getInfo()
+            props = result_info.get("properties") or {}
+            geometry_type = result_info.get("geometry_type", "Unknown")
 
-            # --- Client-Side Table Creation (no changes needed here) ---
+            try:
+                n_features = feature_collection.size().getInfo()
+            except Exception:
+                n_features = "—"
 
             property_data = []
-            if "properties" in result_info and result_info["properties"]:
-                # The property types are already strings from ee.Algorithms.ObjectType
-                for prop_name, prop_type in result_info["properties"].items():
-                    property_data.append(
-                        {
-                            "Property Name": prop_name,
-                            "Property Type": prop_type.lower(),  # e.g., 'Number', 'String'
-                        }
-                    )
-            else:
+            for prop_name, prop_type in props.items():
                 property_data.append(
                     {
-                        "Property Name": "No properties found",
-                        "Property Type": "N/A",
+                        "Property Name": prop_name,
+                        "Property Type": str(prop_type).lower(),
                     }
                 )
-
-            # Add geometry type as a separate row
-            geometry_type = result_info.get("geometry_type", "Unknown")
+            property_data.append(
+                {"Property Name": "geometry", "Property Type": geometry_type}
+            )
             property_data.append(
                 {
-                    "Property Name": "geometry",
-                    "Property Type": geometry_type,
+                    "Property Name": "number of features",
+                    "Property Type": str(n_features),
                 }
             )
 
@@ -627,8 +1507,7 @@ class GEEFeatureCollectionInfo:
             return knext.Table.from_pandas(df)
 
         except Exception as e:
-            # Handle cases where the collection might be empty
-            LOGGER.error(f"Failed to get Feature Collection info: {e}")
+            LOGGER.error("Failed to get Feature Collection info: %s", e)
             df = pd.DataFrame(
                 [
                     {
@@ -663,13 +1542,20 @@ class GEEFeatureCollectionInfo:
 class FeatureCollectionToTable:
     """Converts a Google Earth Engine FeatureCollection to a local table.
 
+    This node converts a Feature Collection to a local table using Output format and is commonly used for small collections or previewing results.
+
+    **Parameters:**
+    - **Output format:** DataFrame or GeoDataFrame.
+
+    **Usage notes:**
+    - Interactive API has a payload limit; use Feature Collection Exporter for large data.
     This node converts a Google Earth Engine FeatureCollection to a KNIME table,
     allowing you to work with GEE vector data in standard tabular format.
     This node bridges GEE vector operations with KNIME's data processing capabilities,
     making it useful for exporting classification results, converting GEE vector analysis outputs,
     and processing GEE-generated point samples or administrative boundaries.
 
-    **⚠️ IMPORTANT - Data Size Limitations:**
+    **IMPORTANT - Data Size Limitations:**
 
     This node is designed for **small to medium-sized Feature Collections** only.
     It uses GEE's interactive API which has a **10MB payload limit**.
@@ -794,6 +1680,14 @@ class FeatureCollectionToTable:
 class GeoTableToFeatureCollection:
     """Converts a local GeoTable to a Google Earth Engine FeatureCollection.
 
+    This node uploads a GeoTable using Geometry column and Batch size parameters and is commonly used to bring local study areas or training samples into GEE.
+
+    **Parameters:**
+    - **Geometry column:** Column containing geometry.
+    - **Batch size:** Features per batch for large uploads.
+
+    **Usage notes:**
+    - Large tables are batched automatically to avoid upload limits.
     This node converts a KNIME table containing geometry data to a Google Earth Engine FeatureCollection,
     enabling vector data processing in GEE workflows. This node bridges local GIS data with GEE's processing capabilities,
     making it useful for uploading study area boundaries, converting training samples for classification,
@@ -946,6 +1840,16 @@ class GeoTableToFeatureCollection:
 class FeatureCollectionExporter:
     """Exports a FeatureCollection to Google Drive or Google Cloud Storage.
 
+    This node exports a Feature Collection using Destination mode, Export format, Destination path, and Wait for completion parameters and is commonly used to download large vector results.
+
+    **Parameters:**
+    - **Destination mode:** Drive or Cloud Storage.
+    - **Export format:** CSV, GeoJSON, KML, KMZ, or SHP.
+    - **Destination path:** Drive folder or Cloud Storage path.
+    - **Wait for completion / Max wait seconds:** Optional blocking export.
+
+    **Usage notes:**
+    - Service accounts require Cloud Storage; Drive needs interactive auth with Drive scope.
     **Authentication & Scopes**
 
     - Always include ``https://www.googleapis.com/auth/earthengine`` in the Google Authenticator node.
@@ -1193,6 +2097,13 @@ class FeatureCollectionExporter:
 class CloudStorageToTable:
     """Reads a file from Google Cloud Storage and converts it to a KNIME table.
 
+    This node reads a Cloud Storage file using Cloud Storage path and is commonly used to bring exported CSV or vector files back into KNIME.
+
+    **Parameters:**
+    - **Cloud Storage path:** Path to the file in a bucket.
+
+    **Usage notes:**
+    - File extension determines parser; supported: CSV, GeoJSON, KML/KMZ, SHP.
     Provide the file as a single Cloud Storage path such as ``bucket/path/file.ext`` or
     ``gs://bucket/path/file.ext``. The bucket must already exist and the filename must include
     the desired extension so the loader can detect CSV, GeoJSON, KML/KMZ, or SHP formats.

@@ -17,7 +17,7 @@ __category = knext.category(
     path="/community/gee",
     level_id="tool",
     name="Tool",
-    description="Google Earth Engine Tool and Utility nodes",
+    description="Utilities: resample, band calculator, composite, training data, classification, clustering.",
     icon="icons/tool.png",
     after="visualize",
 )
@@ -1186,7 +1186,7 @@ class KMeansClustering:
     port_type=gee_image_port_type,
 )
 class FocalOperations:
-    """Performs focal (neighborhood) operations on images.
+    """Performs focal neighborhood operations on images.
 
     This node applies various focal filters to images for noise reduction,
     edge detection, and morphological operations. It's essential for image

@@ -5,6 +5,175 @@ from typing import List
 import knime_extension as knext
 
 
+############################################
+# Common enum options for GEE nodes (shared by pixel, imagecollection, etc.)
+############################################
+
+
+class BandOperation(knext.EnumParameterOptions):
+    """Options for band calculation operations (Bi-Band Calculator)."""
+
+    ADDITION = ("Addition", "B1 + B2: Add two bands together")
+    SUBTRACTION = ("Subtraction", "B1 - B2 or B2 - B1: Subtract one band from another")
+    MULTIPLICATION = ("Multiplication", "B1 * B2: Multiply two bands")
+    DIVISION = ("Division", "B1 / B2 or B2 / B1: Divide one band by another")
+    NORMALIZED_DIFFERENCE = (
+        "Normalized Difference",
+        "(B1 - B2) / (B1 + B2): Commonly used for indices like NDVI, NDWI",
+    )
+    POWER = ("Power", "B1 ^ B2 or B2 ^ B1: Raise one band to the power of another")
+    MAXIMUM = ("Maximum", "max(B1, B2): Maximum value of the two bands")
+    MINIMUM = ("Minimum", "min(B1, B2): Minimum value of the two bands")
+    MEAN = ("Mean", "(B1 + B2) / 2: Average of the two bands")
+
+    @classmethod
+    def get_default(cls):
+        return cls.NORMALIZED_DIFFERENCE
+
+
+class PredefinedIndex(knext.EnumParameterOptions):
+    """Options for pre-defined spectral indices (Band Calculator, Image Collection Band Calculator)."""
+
+    NDVI = ("NDVI", "Normalized Difference Vegetation Index")
+    NDWI = ("NDWI", "Normalized Difference Water Index")
+    NBR = ("NBR", "Normalized Burn Ratio")
+    NDSI = ("NDSI", "Normalized Difference Snow Index")
+    SAVI = ("SAVI", "Soil Adjusted Vegetation Index")
+    EVI = ("EVI", "Enhanced Vegetation Index")
+    NDMI = ("NDMI", "Normalized Difference Moisture Index")
+    GCI = ("GCI", "Green Chlorophyll Index")
+
+
+class BandReducer(knext.EnumParameterOptions):
+    """Options for Band Reducer / Band Aggregator (per-pixel across bands)."""
+
+    MAX = ("Max", "Maximum value across bands")
+    MIN = ("Min", "Minimum value across bands")
+    MEAN = ("Mean", "Mean across bands")
+    MEDIAN = ("Median", "Median across bands")
+    SUM = ("Sum", "Sum across bands")
+    PRODUCT = ("Product", "Product across bands")
+    STDDEV = ("StdDev", "Standard deviation across bands")
+    VARIANCE = ("Variance", "Variance across bands")
+    FIRST = ("First", "First band value")
+    LAST = ("Last", "Last band value")
+    COUNT = ("Count", "Number of bands")
+
+
+############################################
+# Shared description strings for Band / MultiBand Calculator nodes
+############################################
+
+# Expression symbols with examples and results (for node docstrings)
+CALC_EXPRESSION_SYMBOLS_AND_EXAMPLES = """
+**Supported symbols and examples (band names as variables):**
+
+• **Arithmetic:** ``+`` ``-`` ``*`` ``/`` ``%`` ``**``
+  Band1 + Band2 → sum; Band1 - Band2 → difference; Band1 * Band2 → product;
+  Band1 / Band2 → ratio; Band1 % Band2 → remainder; Band1 ** 2 → Band1 squared.
+
+• **Comparison:** ``<`` ``<=`` ``>`` ``>=`` ``==`` ``!=``
+  Band1 > 0 → 1 where true, 0 where false (often used inside conditional).
+
+• **Logical:** ``&&`` (and), ``||`` (or), ``!`` (not)
+  Band1 > 0 && Band2 < 1 → 1 only where both conditions true.
+
+• **Conditional (reclassify):** ``?`` and ``:`` — condition ? valueIfTrue : valueIfFalse
+  - Binary: Band1 > 0 ? 1 : 0 → output 1 where Band1 > 0, else 0.
+  - Multi-class (chain): (Band1 <= 100) ? 0 : (Band1 <= 200) ? 1 : (Band1 <= 500) ? 2 : 3
+    → zone 0 if Band1 ≤ 100, zone 1 if ≤ 200, zone 2 if ≤ 500, else zone 3.
+  - By zone assign another band: (zone == 1) ? distance : 0
+    → where zone equals 1 output distance, else 0 (mask distance by zone). Use your band names for zone and distance.
+
+• **Functions:** ``abs()`` ``sqrt()`` ``pow(x,y)`` ``min()`` ``max()`` ``round()`` ``floor()`` ``ceil()``
+  sqrt(Band1), abs(Band1 - Band2), min(Band1, Band2), max(Band1, Band2).
+"""
+
+# Shorter one-line version for parameter tooltips
+CALC_EXPRESSION_SYMBOLS = (
+    "Arithmetic: + - * / % ** ; Comparison: < <= > >= == != ; "
+    "Logical: && || ! ; Conditional: condition ? a : b ; Functions: abs(), sqrt(), pow(), min(), max(), round(), floor(), ceil()."
+)
+
+# Short examples (generic band names Band1, Band2)
+CALC_EXPRESSION_EXAMPLE = (
+    "e.g. (Band1 - Band2) / (Band1 + Band2) for a normalized difference index."
+)
+CALC_PROP_EXAMPLE = (
+    'e.g. Band1 * prop("scale") + prop("offset") to scale using image properties.'
+)
+
+# MultiBand
+MULTIBAND_PLACEHOLDERS = 'Placeholders BX1, BX2, BX3, BX4: BX1 = band (no quotes); property names in prop("BX2"), prop("BX3").'
+MULTIBAND_INPUT_FORMAT = "Rows separated by semicolon (;) ; within each row, comma-separated values for BX1, BX2, ..."
+MULTIBAND_EXAMPLE_1BAND = (
+    "One slot: expression BX1 * 0.0000275 - 0.2, rows Band1; Band2."
+)
+MULTIBAND_EXAMPLE_2BAND = 'Two slots with props: expression BX1 * prop("BX2") + prop("BX3"), rows Band1, Mult1, Add1; Band2, Mult2, Add2.'
+
+
+############################################
+# Feature Collection Calculator (expression over feature properties)
+############################################
+
+FC_CALC_EXPRESSION_SYMBOLS_AND_EXAMPLES = """
+**Supported symbols (property names as variables):**
+
+• **Arithmetic:** ``+`` ``-`` ``*`` ``/`` and parentheses ``(`` ``)``
+  pop10 + pop20 → sum; pop10 - pop20 → difference; pop10 * 2 → doubled;
+  pop10 / area_sq_mi → ratio (e.g. population density).
+
+• **List length:** ``size(propertyName)`` — number of items in a list property.
+  Use after a saveAll join: ``size(trees)`` or ``size(matches)`` → total count per feature.
+
+**Examples:**
+
+• Population density: ``pop10 / area_sq_mi`` → output property ``pop_density``.
+• Count matches after join: ``size(trees)`` → output property ``total_trees``.
+• Combined: ``(pop10 * 2) / area_sq_mi`` or ``pop10 / (area_sq_mi + 0.001)``.
+"""
+
+FC_CALC_EXPRESSION_SYMBOLS = "Arithmetic: + - * / and parentheses. Use size(propertyName) for list length (e.g. after saveAll join)."
+
+
+############################################
+# Value Filter / Mask (Image and Image Collection)
+############################################
+
+# Filter by property: drop images where metadata does not satisfy condition
+VALUE_FILTER_PROPERTY_FORMULA = (
+    "Formula: **Property** op **Value**. Keep only images where condition is true. "
+    "Example: CLOUD_COVER <= 20 (keep images with cloud cover ≤ 20)."
+)
+VALUE_FILTER_PROPERTY_EXAMPLE = 'e.g. CLOUD_COVER <= 20; WRS_PATH == "001"; property name and value depend on your collection.'
+
+# Mask by band value: per-pixel mask, keep pixels where Band op Value
+MASK_BY_BAND_FORMULA = (
+    "Formula: **Band** op **Value**. Pixels satisfying the condition are kept; others masked. "
+    "Operators: >=, >, <=, <, ==, != . Example: Band >= 0; Band == 0 (saturation); QA_RADSAT == 0."
+)
+MASK_BY_BAND_EXAMPLE = "e.g. Band >= 0; Band == 0; QA_RADSAT == 0 (keep unsaturated)."
+
+# bitwise0: (Band & Value) == 0 — keep pixels where bitwise AND equals 0
+MASK_BITWISE0_FORMULA = (
+    "Formula: (**Band** & **Value**) == 0. Pixels where the bitwise AND equals 0 are kept. "
+    "Example: QA_PIXEL with Value 31 → clear pixels (Landsat QA, lowest 5 bits 0)."
+)
+MASK_BITWISE0_EXAMPLE = "e.g. Band = QA_PIXEL, Value = 31 (Landsat clear pixels)."
+
+# Single-image value filter (same comparison, one band)
+IMAGE_VALUE_FILTER_FORMULA = (
+    "Formula: **Band** op **Value**. Pixels satisfying the condition are retained; others masked or set to 0. "
+    "Operators: >=, >, <=, <, ==, != . Example: Band >= 0; Band > 0.5 (e.g. NDVI mask)."
+)
+
+# Mask Apply workflow: create mask with Value Filter
+MASK_APPLY_WORKFLOW_EXAMPLE = (
+    "1. Create mask: use **GEE Image Value Filter** with e.g. Band > 0.5 (e.g. NDVI). "
+    "2. Apply: use this node with base image and that mask."
+)
+
+
 # get feature collection column names
 def get_fc_columns(fc):
     """Get the column names of a feature collection.
@@ -501,6 +670,29 @@ def export_gee_clusterer_connection(
     )
 
 
+def export_gee_array_connection(array, existing_connection):
+    """
+    Export a GEE Array as a specialized Array connection object.
+
+    Args:
+        array: The GEE Array object
+        existing_connection: Existing connection object to get credentials and project_id from
+
+    Returns:
+        GEEArrayConnectionObject: Specialized Array connection object
+    """
+    from util.common import (
+        GEEArrayConnectionObject,
+        GEEArrayObjectSpec,
+    )
+
+    credentials = existing_connection.credentials
+    project_id = existing_connection.spec.project_id
+    spec = GEEArrayObjectSpec(project_id)
+
+    return GEEArrayConnectionObject(spec=spec, credentials=credentials, array=array)
+
+
 def export_gee_image_collection_connection(image_collection, existing_connection):
     """
     Export a GEE ImageCollection as a specialized ImageCollection connection object.
@@ -984,3 +1176,128 @@ def batch_process_gee_operation(
             return results
     else:
         raise ValueError("No batches were successfully processed")
+
+
+# GEE maxPixels 常量
+GEE_MAX_PIXELS = 2147483647  # 32-bit signed integer maximum (2,147,483,647)
+
+
+def create_max_pixels_parameter(
+    default_value=1000000000,
+    min_value=1000,
+    description="Maximum number of pixels Earth Engine is allowed to process (integer ≤ 2,147,483,647).",
+    is_advanced=True,
+):
+    """
+    Create a standardized maxPixels IntParameter for GEE operations.
+
+    Args:
+        default_value (int): Default value for maxPixels (default: 1e9)
+        min_value (int): Minimum allowed value (default: 1000)
+        description (str): Parameter description (default: standard GEE description)
+        is_advanced (bool): Whether parameter is advanced (default: True)
+
+    Returns:
+        knext.IntParameter: Configured IntParameter for maxPixels
+
+    Examples:
+        # Standard usage with default 1e9
+        max_pixels = knut.create_max_pixels_parameter()
+
+        # Custom default value
+        max_pixels = knut.create_max_pixels_parameter(default_value=10000000)
+
+        # Custom description
+        max_pixels = knut.create_max_pixels_parameter(
+            description="Maximum pixels for covariance calculation."
+        )
+    """
+    return knext.IntParameter(
+        "Max pixels",
+        description,
+        default_value=default_value,
+        min_value=min_value,
+        max_value=GEE_MAX_PIXELS,
+        is_advanced=is_advanced,
+    )
+
+
+############################################
+# Nominal Scale (Use NominalScale + Scale parameters)
+############################################
+
+
+def create_nominal_scale_parameters(
+    default_scale=30,
+    min_value=1,
+    max_value=10000,
+    scale_description="The scale in meters. Only used when Use NominalScale is disabled.",
+    use_nominal_description="Use the image's nominal scale (native resolution). When disabled, use the Scale (meters) parameter below.",
+):
+    """
+    Create Use NominalScale and Scale parameters for GEE reduce/sample nodes.
+
+    Returns (use_nominal_scale_param, scale_param). The scale param is shown only
+    when Use NominalScale is disabled. Use resolve_scale() in execute to get the
+    actual scale value.
+
+    Args:
+        default_scale (int): Default scale when Use NominalScale is disabled
+        min_value (int): Minimum scale value
+        max_value (int): Maximum scale value
+        scale_description (str): Description for the Scale parameter
+        use_nominal_description (str): Description for Use NominalScale
+
+    Returns:
+        tuple: (use_nominal_scale_param, scale_param)
+
+    Examples:
+        # In node class:
+        use_nominal_scale, scale = knut.create_nominal_scale_parameters()
+
+        # In execute:
+        scale_value = knut.resolve_scale(
+            self.use_nominal_scale, self.scale, image
+        )
+        stats = image.reduceRegions(..., scale=scale_value, ...)
+    """
+    use_nominal_scale = knext.BoolParameter(
+        "Use NominalScale",
+        use_nominal_description,
+        default_value=True,
+    )
+    scale = knext.IntParameter(
+        "Scale (meters)",
+        scale_description,
+        default_value=default_scale,
+        min_value=min_value,
+        max_value=max_value,
+    ).rule(knext.OneOf(use_nominal_scale, [False]), knext.Effect.SHOW)
+    return (use_nominal_scale, scale)
+
+
+def resolve_scale(use_nominal_scale, scale_param, projection_source):
+    """
+    Resolve the scale value for GEE reduceRegion, sampleRegions, etc.
+
+    Args:
+        use_nominal_scale (bool): From Use NominalScale parameter
+        scale_param (int): From Scale (meters) parameter
+        projection_source: ee.Image, ee.ImageCollection, or ee.Projection.
+            When use_nominal_scale is True, nominalScale() is taken from this.
+
+    Returns:
+        Scale value (ee.Number or int) for use in reduceRegion, sampleRegions, etc.
+    """
+    if use_nominal_scale:
+        if hasattr(projection_source, "projection"):
+            if hasattr(projection_source, "select"):
+                return projection_source.select(0).projection().nominalScale()
+            return projection_source.projection().nominalScale()
+        if hasattr(projection_source, "first"):
+            img = projection_source.first()
+            if hasattr(img, "select"):
+                return img.select(0).projection().nominalScale()
+            return img.projection().nominalScale()
+        return projection_source.nominalScale()
+    return scale_param

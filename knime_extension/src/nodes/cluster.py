@@ -21,8 +21,8 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="clustering",
-    name="Clustering",
-    description="Google Earth Engine Unsupervised Classification (Clustering) nodes",
+    name="GEE Clustering",
+    description="Unsupervised clustering: K-Means, X-Means, apply to image, SNIC segmentation.",
     icon="icons/cluster.png",
     after="supervised",
 )
@@ -33,158 +33,6 @@ __NODE_ICON_PATH = "icons/icon/clustering/"
 # Output band name for clustering results
 _ClusterResult = "cluster"
 
-############################################
-# Image Cluster Sampling
-############################################
-
-
-@knext.node(
-    name="Image Cluster Sampling",
-    node_type=knext.NodeType.MANIPULATOR,
-    category=__category,
-    icon_path=__NODE_ICON_PATH + "SampleImagePoints.png",
-    id="imageclustersampling",
-    after="",
-)
-@knext.input_port(
-    name="GEE Image Connection",
-    description="GEE Image connection with image to sample for clustering training.",
-    port_type=gee_image_port_type,
-)
-@knext.output_port(
-    name="GEE Feature Collection Connection",
-    description="GEE Feature Collection connection with sampled training points (band values).",
-    port_type=gee_feature_collection_port_type,
-)
-class ImageClusterSampling:
-    """Samples pixels from an image to create training data for clustering.
-
-    This node generates random sample points from an image and extracts band values
-    at these points, creating a FeatureCollection suitable for training clusterers.
-    Unlike supervised classification sampling, this node does not require labels
-    since clustering is unsupervised.
-
-    **Sampling Process:**
-
-    - Generates random sample points within the image geometry
-    - Extracts band values from the image at these points
-    - Output FeatureCollection contains band values as properties
-    - Each feature represents one sampled pixel with all band values
-
-    **Parameters:**
-
-    - **Scale**: Pixel scale in meters (default: 30m, typical for Landsat/Sentinel-2)
-    - **Number of Pixels**: Number of sample points to generate (default: 5000)
-    - **Random Seed**: For reproducible sampling (default: 0, advanced)
-    - **Tile Scale**: Performance optimization for large areas (default: 1.0, higher = faster, advanced)
-
-    **Common Use Cases:**
-
-    - Creating training samples for K-Means clustering
-    - Generating representative samples for X-Means clustering
-    - Exploratory data analysis and pattern discovery
-
-    **Workflow:**
-
-    1. Sample image: `Image` → This node → `Feature Collection`
-    2. Train clusterer: `Feature Collection` → `K-Means Clusterer Learner` → `Clusterer`
-    3. Apply clusterer: `Image` + `Clusterer` → `Apply Clusterer` → `Clustered Image`
-
-    **Reference:**
-    Based on Earth Engine clustering guide: https://developers.google.com/earth-engine/guides/clustering
-    """
-
-    scale = knext.IntParameter(
-        "Scale",
-        "Pixel scale in meters for sampling (e.g., 30 for Landsat, 10 for Sentinel-2)",
-        default_value=30,
-        min_value=1,
-        max_value=1000,
-    )
-
-    num_pixels = knext.IntParameter(
-        "Number of pixels",
-        "Number of sample points to generate for training",
-        default_value=5000,
-        min_value=100,
-        max_value=100000,
-    )
-
-    seed = knext.IntParameter(
-        "Random seed",
-        "Random seed for reproducible sampling",
-        default_value=0,
-        min_value=0,
-        max_value=10000,
-        is_advanced=True,
-    )
-
-    tile_scale = knext.DoubleParameter(
-        "Tile scale",
-        "Tile scale for performance optimization (1.0 = default, higher = faster for large areas)",
-        default_value=1.0,
-        min_value=0.1,
-        max_value=16.0,
-        is_advanced=True,
-    )
-
-    def configure(self, configure_context, input_schema):
-        return None
-
-    def execute(
-        self,
-        exec_context: knext.ExecutionContext,
-        image_connection,
-    ):
-        import ee
-        import logging
-
-        LOGGER = logging.getLogger(__name__)
-
-        try:
-            # Get image from connection
-            image = image_connection.image
-
-            if not isinstance(image, ee.Image):
-                raise ValueError("Input must be an Image object")
-
-            # Get image geometry for sampling region
-            sampling_region = image.geometry()
-
-            # Get band names
-            band_names = image.bandNames().getInfo()
-            LOGGER.warning(
-                f"Sampling {self.num_pixels} pixels from {len(band_names)} bands: {band_names}"
-            )
-
-            # Generate random sample points from image
-            LOGGER.warning(
-                f"Generating {self.num_pixels} random sample points at {self.scale}m scale"
-            )
-
-            sample_points = image.sample(
-                region=sampling_region,
-                scale=self.scale,
-                numPixels=self.num_pixels,
-                seed=self.seed,
-                tileScale=self.tile_scale,  # Performance optimization for large areas
-                geometries=True,  # Preserve geometry for GeoDataFrame conversion
-            )
-
-            try:
-                point_count = sample_points.size().getInfo()
-                LOGGER.warning(f"Successfully sampled {point_count} points from image")
-            except Exception:
-                LOGGER.warning("Sampling completed (size check skipped)")
-
-            return knut.export_gee_feature_collection_connection(
-                sample_points, image_connection
-            )
-
-        except Exception as e:
-            LOGGER.error(f"Image cluster sampling failed: {e}")
-            raise
-
 
 ############################################
 # K-Means Clusterer Learner
@@ -192,7 +40,7 @@ class ImageClusterSampling:
 
 
 @knext.node(
-    name="K-Means Clusterer Learner",
+    name="K-Means Clustering Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "KMeans.png",
@@ -211,6 +59,9 @@ class ImageClusterSampling:
 )
 class KMeansClustererLearner:
     """Trains a K-Means clusterer using training data.
+
+    This node trains a K-Means clusterer using Bands/Features and K-related parameters,
+    and is commonly used for unsupervised land cover or image segmentation when labels are unavailable.
 
     K-Means is one of the most popular and widely-used clustering algorithms.
     It partitions data into K clusters by minimizing within-cluster variance.
@@ -526,7 +377,7 @@ class KMeansClustererLearner:
 
 
 @knext.node(
-    name="X-Means Clusterer Learner",
+    name="X-Means Clustering Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "XMeans.png",
@@ -545,6 +396,9 @@ class KMeansClustererLearner:
 )
 class XMeansClustererLearner:
     """Trains an X-Means clusterer that automatically determines the optimal number of clusters.
+
+    This node trains an X-Means clusterer using Bands/Features and min or max cluster range parameters,
+    and is commonly used when the optimal number of clusters is unknown.
 
     X-Means is an extension of K-Means that automatically determines the optimal number of clusters
     within a specified range. It uses a Bayesian information criterion to decide when to split clusters.
@@ -816,7 +670,7 @@ class XMeansClustererLearner:
 
 
 @knext.node(
-    name="Apply Clusterer",
+    name="Apply Clustering",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ClusteringToImage.png",
@@ -841,6 +695,9 @@ class XMeansClustererLearner:
 class ApplyClusterer:
     """Applies a trained clusterer to cluster an image.
 
+    This node applies a trained clusterer to an image using the clusterer connection and selected
+    bands, and is commonly used to create a cluster label map for visualization or downstream analysis.
+
     This node uses a trained clustering model to assign cluster labels to pixels in an image,
     producing a cluster map where each pixel is assigned to a cluster.
 
@@ -853,6 +710,7 @@ class ApplyClusterer:
     **Output:**
 
     The node outputs an image with one band:
+
     - **cluster**: Cluster IDs (integer values representing cluster assignments)
 
     **Common Use Cases:**
@@ -920,4 +778,167 @@ class ApplyClusterer:
 
         except Exception as e:
             LOGGER.error(f"Apply clusterer failed: {e}")
+            raise
+
+
+############################################
+# SNIC Segmentation
+############################################
+
+
+@knext.node(
+    name="GEE SNIC Segmentation",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "cluster.png",
+    id="snicesegmentation",
+    after="",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with multi-band imagery for segmentation.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with segmentation results (clusters + band means).",
+    port_type=gee_image_port_type,
+)
+class SNICSegmentation:
+    """Performs Simple Non-Iterative Clustering segmentation on imagery.
+
+    This node performs SNIC segmentation using Super pixel size, Compactness, and Connectivity
+     parameters, and is commonly used to create superpixels for object-based analysis.
+
+    SNIC is a bottom-up, seed-based segmentation algorithm that assembles clusters
+    from neighboring pixels based on parameters of compactness, connectivity, and
+    neighborhood size. It creates "superpixels" that group similar pixels together.
+
+    **Output:**
+
+    - **clusters**: Cluster ID for each pixel
+    - **seeds**: Seed point locations
+    - **band_mean**: Mean value of each band within each cluster (e.g., B2_mean, B3_mean)
+
+    **Common Use Cases:**
+
+    - Object-based classification
+    - Noise reduction in classifications
+    - Land cover mapping
+    - Forest disturbance mapping
+    - Wetland inventory
+    - Burned area mapping
+
+    **Parameters:**
+
+    - **SuperPixelSize**: Seed spacing in pixels (larger = bigger segments)
+    - **Compactness**: Spatial distance weighting (0 = disabled, higher = more compact/square)
+    - **Connectivity**: 4 or 8-connected neighborhood
+    - **SeedShape**: Square or hexagonal seed grid
+
+    **Note:** SNIC segmentation is essential for object-based image analysis workflows.
+    Use the output with classification nodes for object-based classification.
+    """
+
+    super_pixel_size = knext.IntParameter(
+        "Super pixel size (pixels)",
+        "Seed location spacing in pixels. Larger values create bigger segments.",
+        default_value=16,
+        min_value=4,
+        max_value=100,
+    )
+
+    compactness = knext.DoubleParameter(
+        "Compactness",
+        "Spatial distance weighting. Higher values create more compact (square/hexagonal) clusters. Set to 0 to disable.",
+        default_value=0.0,
+        min_value=0.0,
+        max_value=10.0,
+    )
+
+    connectivity = knext.StringParameter(
+        "Connectivity",
+        "Pixel connectivity (4 or 8-connected neighborhood).",
+        default_value="4",
+        enum=["4", "8"],
+    )
+
+    seed_shape = knext.StringParameter(
+        "Seed shape",
+        "Shape of the seed grid for initializing superpixels.",
+        default_value="square",
+        enum=["square", "hex"],
+    )
+
+    neighborhood_size = knext.IntParameter(
+        "Neighborhood size",
+        "Tile neighborhood size to avoid tile boundary artifacts. Defaults to 2 * superPixelSize.",
+        default_value=0,
+        min_value=0,
+        max_value=500,
+    )
+
+    output_band_means = knext.BoolParameter(
+        "Output band means",
+        "If enabled, outputs mean values of each input band within each cluster (e.g., B2_mean, B3_mean).",
+        default_value=True,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        try:
+            image = image_connection.image
+
+            # Set neighborhood size (default to 2 * superPixelSize)
+            if self.neighborhood_size == 0:
+                neighborhood_size = 2 * self.super_pixel_size
+            else:
+                neighborhood_size = self.neighborhood_size
+
+            # Create seed grid
+            seeds = ee.Algorithms.Image.Segmentation.seedGrid(
+                self.super_pixel_size, self.seed_shape
+            )
+
+            # Perform SNIC segmentation
+            snic_result = ee.Algorithms.Image.Segmentation.SNIC(
+                image=image,
+                size=self.super_pixel_size,
+                compactness=self.compactness,
+                connectivity=int(self.connectivity),
+                neighborhoodSize=neighborhood_size,
+                seeds=seeds,
+            )
+
+            # Add seeds to output
+            output_image = snic_result.addBands(seeds)
+
+            # Optionally add band means
+            if self.output_band_means:
+                band_names = image.bandNames().getInfo()
+                band_mean_names = [f"{band}_mean" for band in band_names]
+                band_means = snic_result.select(band_mean_names)
+                output_image = output_image.addBands(band_means)
+
+            LOGGER.warning(
+                f"SNIC segmentation completed: superPixelSize={self.super_pixel_size}, "
+                f"compactness={self.compactness}, connectivity={self.connectivity}, "
+                f"seedShape={self.seed_shape}"
+            )
+
+            return knut.export_gee_image_connection(output_image, image_connection)
+
+        except Exception as e:
+            LOGGER.error(f"SNIC segmentation failed: {e}")
             raise
