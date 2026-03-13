@@ -100,9 +100,9 @@ class LinearFit:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=10000000,
+        default_value=knut.GEE_MAX_PIXELS,
         description="Maximum number of pixels to use (only used if bestEffort is disabled).",
-        is_advanced=False,
+        is_advanced=True,
     ).rule(knext.OneOf(best_effort, [False]), knext.Effect.SHOW)
 
     generate_prediction = knext.BoolParameter(
@@ -312,9 +312,9 @@ class LinearRegression:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=10000000,
+        default_value=knut.GEE_MAX_PIXELS,
         description="Maximum number of pixels to use (only used if bestEffort is disabled).",
-        is_advanced=False,
+        is_advanced=True,
     ).rule(knext.OneOf(best_effort, [False]), knext.Effect.SHOW)
 
     generate_prediction = knext.BoolParameter(
@@ -797,7 +797,7 @@ class CARTRegressionLearner:
 
 
 @knext.node(
-    name="Image Regression Predictor",
+    name="GEE Image Regression Predictor",
     node_type=knext.NodeType.PREDICTOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageRegressPredictor.png",
@@ -932,7 +932,7 @@ class ImageRegressionPredictor:
 
 
 @knext.node(
-    name="Feature Collection Regression Predictor",
+    name="GEE Feature Collection Regression Predictor",
     node_type=knext.NodeType.PREDICTOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCRegression.png",

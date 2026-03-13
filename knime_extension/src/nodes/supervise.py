@@ -391,7 +391,7 @@ def compute_validation_metrics_from_classified_fc(
 
 
 @knext.node(
-    name="Reference Image Point Sampler",
+    name="GEE Reference Image Point Sampler",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "PointLabel.png",
@@ -625,7 +625,7 @@ class LabelPointsFromImage:
 
 
 @knext.node(
-    name="Reference Feature Collection Sampler",
+    name="GEE Reference Feature Collection Sampler",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "LabelFeature.png",
@@ -883,7 +883,7 @@ class SampleRegionsForClassification:
 
 
 @knext.node(
-    name="Feature Collection Partitioner",
+    name="GEE Feature Collection Partitioner",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCpartitioner.png",
@@ -2028,7 +2028,7 @@ class NaiveBayesLearner:
 
 
 @knext.node(
-    name="Image Class Predictor",
+    name="GEE Image Class Predictor",
     node_type=knext.NodeType.PREDICTOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImagePredictor.png",
@@ -2175,7 +2175,7 @@ class ImageClassPredictor:
 
 
 @knext.node(
-    name="Feature Collection Predictor",
+    name="GEE Feature Collection Predictor",
     node_type=knext.NodeType.PREDICTOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCpredictor.png",

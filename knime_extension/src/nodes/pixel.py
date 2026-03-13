@@ -724,7 +724,7 @@ class BandwiseNormalization:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=10000000,
+        default_value=knut.GEE_MAX_PIXELS,
         description="Maximum pixels for reduceRegion (statistics computation).",
         is_advanced=True,
     )
@@ -915,7 +915,7 @@ class TerrainOutputOptions(knext.EnumParameterOptions):
 
 
 @knext.node(
-    name="Terrain from Elevation",
+    name="GEE Terrain from Elevation",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "TerrainFromElev.png",
@@ -1293,7 +1293,7 @@ class PrincipalComponentAnalysis:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=1000000000,
+        default_value=knut.GEE_MAX_PIXELS,
         description="Maximum number of pixels to use for covariance calculation. Use this to limit computation for very large images. If exceeded, GEE will use bestEffort mode.",
     )
 
@@ -1887,7 +1887,7 @@ class HSVColorTransform:
 
 
 @knext.node(
-    name="Table to GEE Array",
+    name="GEE Table to Array",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "TableToArray.png",

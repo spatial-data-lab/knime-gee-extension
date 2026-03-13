@@ -40,7 +40,7 @@ _ClusterResult = "cluster"
 
 
 @knext.node(
-    name="K-Means Clustering Learner",
+    name="GEE K-Means Clustering Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "KMeans.png",
@@ -377,7 +377,7 @@ class KMeansClustererLearner:
 
 
 @knext.node(
-    name="X-Means Clustering Learner",
+    name="GEE X-Means Clustering Learner",
     node_type=knext.NodeType.LEARNER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "XMeans.png",
@@ -670,7 +670,7 @@ class XMeansClustererLearner:
 
 
 @knext.node(
-    name="Apply Clustering",
+    name="GEE Apply Clustering",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ClusteringToImage.png",

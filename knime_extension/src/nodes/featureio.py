@@ -16,7 +16,7 @@ from util.common import (
 __category = knext.category(
     path="/community/gee",
     level_id="featureio",
-    name="Feature Collection",
+    name="GEE Feature Collection",
     description="Feature collection I/O and processing: read, filter, clip, export.",
     icon="icons/featureIO.png",
     after="authorization",
@@ -32,7 +32,7 @@ __NODE_ICON_PATH = "icons/icon/feature/"
 
 
 @knext.node(
-    name="Feature Collection Reader",
+    name="GEE Feature Collection Reader",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "fcreader.png",
@@ -137,7 +137,7 @@ class GEEFeatureCollectionReader:
 
 
 @knext.node(
-    name="Feature Collection Value Filter",
+    name="GEE Feature Collection Value Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "valueFilter.png",
@@ -377,7 +377,7 @@ class GEEFeatureCollectionFilter:
 
 
 @knext.node(
-    name="Feature Collection to Point",
+    name="GEE Feature Collection to Point",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCtoPoint.png",
@@ -423,7 +423,7 @@ class GEEFeatureCollectionToPoint:
 
 
 @knext.node(
-    name="Feature Collection Spatial Filter",
+    name="GEE Feature Collection Spatial Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "spatialFilter.png",
@@ -583,7 +583,7 @@ class GEEFeatureCollectionSpatialFilter:
 
 
 @knext.node(
-    name="Feature Collection Join",
+    name="GEE Feature Collection Join",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCJoin.png",
@@ -879,7 +879,7 @@ def _codegen_fc_calc(ast):
 
 
 @knext.node(
-    name="Feature Collection Calculator",
+    name="GEE Feature Collection Calculator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCCalculator.png",
@@ -999,7 +999,7 @@ class _GeometryUnitOptions(knext.EnumParameterOptions):
 
 
 @knext.node(
-    name="Feature Collection Geometry Calculator",
+    name="GEE Feature Collection Geometry Calculator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCGeometry.png",
@@ -1128,7 +1128,7 @@ class FeatureCollectionGeometryCalculator:
 
 
 @knext.node(
-    name="Feature Collection to Image",
+    name="GEE Feature Collection to Image",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCtoImage.png",
@@ -1274,7 +1274,7 @@ class FeatureCollectionToImage:
 
 
 @knext.node(
-    name="Buffer Features",
+    name="GEE Buffer Features",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCBuffer.png",
@@ -1357,7 +1357,7 @@ class BufferFeatures:
 
 
 @knext.node(
-    name="Distance to Feature Collection",
+    name="GEE Distance to Feature Collection",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "DistToFC.png",
@@ -1451,7 +1451,7 @@ class DistanceToFeatureCollection:
 
 
 @knext.node(
-    name="Feature Collection Info Extractor",
+    name="GEE Feature Collection Info Extractor",
     node_type=knext.NodeType.VISUALIZER,
     category=__category,
     icon_path=__NODE_ICON_PATH + "fcinfo.png",
@@ -1549,7 +1549,7 @@ class GEEFeatureCollectionInfo:
 # Feature Collection to Table
 ############################################
 @knext.node(
-    name="Feature Collection to Table",
+    name="GEE Feature Collection to Table",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "fc2table.png",
@@ -1682,7 +1682,7 @@ class FeatureCollectionToTable:
 
 
 @knext.node(
-    name="GeoTable to Feature Collection",
+    name="GEE GeoTable to Feature Collection",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "table2fc.png",
@@ -1864,7 +1864,7 @@ class GeoTableToFeatureCollection:
 
 
 @knext.node(
-    name="Feature Collection Exporter",
+    name="GEE Feature Collection Exporter",
     node_type=knext.NodeType.SINK,
     category=__category,
     icon_path=__NODE_ICON_PATH + "Feature2Cloud.png",
@@ -2117,7 +2117,7 @@ class FeatureCollectionExporter:
 
 
 @knext.node(
-    name="Cloud Storage to Table",
+    name="GEE Cloud Storage to Table",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "Cloud2Table.png",

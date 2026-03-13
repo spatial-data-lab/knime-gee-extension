@@ -570,7 +570,7 @@ class ImageBandMerger:
     description="Table containing image information as JSON for use in automated workflows",
 )
 @knext.output_view(
-    name="Image Info View",
+    name="GEE Image Info View",
     description="HTML view showing detailed image information",
 )
 class ImageGetInfo:
@@ -958,7 +958,7 @@ class ImageExporter:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=1000000000,
+        default_value=knut.GEE_MAX_PIXELS,
         min_value=1,
         description="Maximum number of pixels Earth Engine is allowed to read during export.",
     )
@@ -1191,7 +1191,7 @@ class ImageExporter:
 
 
 @knext.node(
-    name="Cloud GeoTIFF to GEE Image",
+    name="GEE Cloud GeoTIFF to Image",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "GeotiffToGEE.png",
@@ -1209,7 +1209,7 @@ class ImageExporter:
     port_type=gee_image_port_type,
 )
 @knext.output_view(
-    name="Image Info View",
+    name="GEE Image Info View",
     description="HTML view showing imported image information",
 )
 class GeoTiffToGEEImage:
@@ -1702,7 +1702,7 @@ class ImageConditionalAssignment:
 
 
 @knext.node(
-    name="Pixels to Feature Collection",
+    name="GEE Pixels to Feature Collection",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "Pixel2FC.png",
@@ -1781,7 +1781,7 @@ class PixelsToFeatureCollection:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=1000000000,
+        default_value=knut.GEE_MAX_PIXELS,
         min_value=1,
         description="Maximum number of pixels Earth Engine is allowed to process during vectorization.",
     )

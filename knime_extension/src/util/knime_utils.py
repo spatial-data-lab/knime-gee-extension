@@ -1183,7 +1183,7 @@ GEE_MAX_PIXELS = 2147483647  # 32-bit signed integer maximum (2,147,483,647)
 
 
 def create_max_pixels_parameter(
-    default_value=1000000000,
+    default_value=GEE_MAX_PIXELS,
     min_value=1000,
     description="Maximum number of pixels Earth Engine is allowed to process (integer ≤ 2,147,483,647).",
     is_advanced=True,
@@ -1192,7 +1192,7 @@ def create_max_pixels_parameter(
     Create a standardized maxPixels IntParameter for GEE operations.
 
     Args:
-        default_value (int): Default value for maxPixels (default: 1e9)
+        default_value (int): Default value for maxPixels (default: GEE_MAX_PIXELS)
         min_value (int): Minimum allowed value (default: 1000)
         description (str): Parameter description (default: standard GEE description)
         is_advanced (bool): Whether parameter is advanced (default: True)
@@ -1201,7 +1201,7 @@ def create_max_pixels_parameter(
         knext.IntParameter: Configured IntParameter for maxPixels
 
     Examples:
-        # Standard usage with default 1e9
+        # Standard usage with default GEE_MAX_PIXELS
         max_pixels = knut.create_max_pixels_parameter()
 
         # Custom default value

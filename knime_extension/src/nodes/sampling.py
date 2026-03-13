@@ -55,7 +55,7 @@ class ReducerMethodOptions(knext.EnumParameterOptions):
 
 
 @knext.node(
-    name="Local Point Reducer",
+    name="GEE Local Point Reducer",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "latlonvalue.png",
@@ -466,7 +466,7 @@ class ImageValueByPoint:
 
 
 @knext.node(
-    name="Local Region Reducer",
+    name="GEE Local Region Reducer",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "LocalTableReducer.png",
@@ -726,7 +726,7 @@ class LocalGeoTableReducer:
 
 
 @knext.node(
-    name="Feature Collection Reducer",
+    name="GEE Feature Collection Reducer",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "RegionReducer.png",
@@ -943,7 +943,7 @@ class ReduceRegions:
 
 
 @knext.node(
-    name="Feature Collection Reducer (Image Collection)",
+    name="GEE Feature Collection Reducer (Image Collection)",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICRegionReducer.png",
@@ -1087,7 +1087,7 @@ class ZonalStatisticsIC:
 
 
 @knext.node(
-    name="Count by Class",
+    name="GEE Count by Class",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "CountClass.png",
@@ -1348,7 +1348,7 @@ class CountByClass:
 
 
 @knext.node(
-    name="Count by Class (Image Collection)",
+    name="GEE Count by Class (Image Collection)",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICCountByClass.png",
@@ -1481,7 +1481,7 @@ class CountByClassIC:
 
 
 @knext.node(
-    name="Image Random Sampling",
+    name="GEE Image Random Sampling",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "RandomSample.png",

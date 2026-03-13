@@ -153,7 +153,7 @@ class GEEDatasetSearch:
 
 
 @knext.node(
-    name="Image Collection Reader",
+    name="GEE Image Collection Reader",
     node_type=knext.NodeType.SOURCE,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageCollectionReader.png",
@@ -251,7 +251,7 @@ class ImageCollectionReader:
 
 
 @knext.node(
-    name="Image Collection Info Extractor",
+    name="GEE Image Collection Info Extractor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICInfo.png",
@@ -342,7 +342,7 @@ class ImageCollectionGetInfo:
 
 
 @knext.node(
-    name="Image Collection General Filter",
+    name="GEE Image Collection General Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageCollectionFilter.png",
@@ -607,7 +607,7 @@ class ImageCollectionGeneralFilter:
 
 
 @knext.node(
-    name="Image Collection Value Filter",
+    name="GEE Image Collection Value Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageCollectionFilter.png",
@@ -815,7 +815,7 @@ class ImageCollectionValueFilter:
 
 
 @knext.node(
-    name="Image Collection Spatial Filter",
+    name="GEE Image Collection Spatial Filter",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageCollectionSpatialFilter.png",
@@ -942,7 +942,7 @@ def _simple_pattern_to_regex(pat):
 
 
 @knext.node(
-    name="Image Collection Band Calculator",
+    name="GEE Image Collection Band Calculator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICCalculator.png",
@@ -1117,7 +1117,7 @@ class ImageCollectionBandCalculator:
 
 
 @knext.node(
-    name="Image Collection MultiBand Calculator",
+    name="GEE Image Collection MultiBand Calculator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICMultiCalculator.png",
@@ -1304,7 +1304,7 @@ class ImageCollectionMultiBandCalculator:
 
 
 @knext.node(
-    name="Image Collection Band Selector",
+    name="GEE Image Collection Band Selector",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "BandSelector.png",
@@ -1388,7 +1388,7 @@ class ImageCollectionBandSelector:
 
 
 @knext.node(
-    name="Image Collection Band Renamer",
+    name="GEE Image Collection Band Renamer",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICRenamer.png",
@@ -1473,7 +1473,7 @@ class ImageCollectionBandRenamer:
 
 
 @knext.node(
-    name="Image Collection Merger",
+    name="GEE Image Collection Merger",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICMerge.png",
@@ -1548,7 +1548,7 @@ class ImageCollectionMerger:
 
 
 @knext.node(
-    name="Image Collection Aggregator",
+    name="GEE Image Collection Aggregator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ImageCollectionAggregator.png",
@@ -1617,7 +1617,7 @@ class ImageCollectionAggregator:
         - **count**: Per-pixel count of valid observations (data availability map)
         - **percentile**: Per-pixel percentile(s); use the Percentile(s) parameter to set value(s), e.g. 30 or 0,10,20,...,80
         """,
-        default_value="median",
+        default_value="first",
         enum=[
             "first",
             "last",
@@ -1666,7 +1666,16 @@ class ImageCollectionAggregator:
 
         # Methods that use reduce() produce images with undefined nominalScale.
         # Reproject to first image's projection/scale so downstream nodes get correct scale.
-        _REDUCE_METHODS = {"mean", "median", "min", "max", "sum", "mode", "count", "percentile"}
+        _REDUCE_METHODS = {
+            "mean",
+            "median",
+            "min",
+            "max",
+            "sum",
+            "mode",
+            "count",
+            "percentile",
+        }
 
         # Apply aggregation
         try:
@@ -1711,7 +1720,7 @@ class ImageCollectionAggregator:
 
 
 @knext.node(
-    name="Time-Window Aggregator",
+    name="GEE Time-Window Aggregator",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "TimeWindow.png",
@@ -1862,7 +1871,16 @@ class TimeWindowAggregator:
                 )
             reducer = ee.Reducer.percentile(percentiles)
 
-        _REDUCE_METHODS = {"mean", "median", "min", "max", "sum", "mode", "count", "percentile"}
+        _REDUCE_METHODS = {
+            "mean",
+            "median",
+            "min",
+            "max",
+            "sum",
+            "mode",
+            "count",
+            "percentile",
+        }
         need_reproject = self.aggregation_method in _REDUCE_METHODS
         if need_reproject:
             first_img = ic.first()
@@ -1907,7 +1925,7 @@ class TimeWindowAggregator:
 
 
 @knext.node(
-    name="Pixel-Band Time Series Extractor",
+    name="GEE Pixel-Band Time Series Extractor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "TimeSeriesExtractor.png",
@@ -2261,7 +2279,7 @@ class AddTimeHarmonicComponentOptions(knext.EnumParameterOptions):
 
 
 @knext.node(
-    name="Add Time and Harmonic Bands",
+    name="GEE Add Time and Harmonic Bands",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "AddBands.png",
@@ -2564,7 +2582,7 @@ class ICAddTimeHarmonicBands:
 
 
 @knext.node(
-    name="Image Collection Time Series Regressor",
+    name="GEE Image Collection Time Series Regressor",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICRegression.png",
@@ -2696,7 +2714,7 @@ class ICTimeSeriesRegressor:
 
 
 @knext.node(
-    name="Image Collection Lagged Self-Join",
+    name="GEE Image Collection Lagged Self-Join",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "SelfLag.png",
@@ -2840,7 +2858,7 @@ class ICLaggedJoin:
 
 
 @knext.node(
-    name="Image Collection Cross Lagged Join",
+    name="GEE Image Collection Cross Lagged Join",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "CrossLag.png",
@@ -3002,7 +3020,7 @@ class ICCrossLaggedJoin:
 
 
 @knext.node(
-    name="Image Collection Covariance/Correlation",
+    name="GEE Image Collection Covariance/Correlation",
     node_type=knext.NodeType.MANIPULATOR,
     category=__category,
     icon_path=__NODE_ICON_PATH + "ICCorrelation.png",
