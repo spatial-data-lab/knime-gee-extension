@@ -673,6 +673,7 @@ class LocalGeoTableReducer:
                     collection=feature_collection,
                     reducer=reducers,
                     scale=scale_value,
+                    maxPixelsPerRegion=knut.GEE_MAX_PIXELS,
                 )
                 if (self.crs or "").strip():
                     params["crs"] = (self.crs or "").strip()
@@ -703,6 +704,7 @@ class LocalGeoTableReducer:
                 collection=feature_collection,
                 reducer=reducers,
                 scale=scale_value,
+                maxPixelsPerRegion=knut.GEE_MAX_PIXELS,
             )
             if (self.crs or "").strip():
                 params["crs"] = (self.crs or "").strip()
@@ -882,6 +884,7 @@ class ReduceRegions:
                 reducer=reducers,
                 scale=scale_value,
                 tileScale=self.tile_scale,
+                maxPixelsPerRegion=knut.GEE_MAX_PIXELS,
             )
             if (self.crs or "").strip():
                 reduce_params["crs"] = (self.crs or "").strip()
@@ -1053,6 +1056,7 @@ class ZonalStatisticsIC:
                 collection=fc,
                 reducer=reducers,
                 scale=scale_value,
+                maxPixelsPerRegion=knut.GEE_MAX_PIXELS,
             )
             t = img.get("system:time_start")
             pattern = "YYYY-MM-dd HH:mm:ss" if self.include_time else "YYYY-MM-dd"
@@ -1176,7 +1180,7 @@ class CountByClass:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=1000000000,
+        default_value=knut.GEE_MAX_PIXELS,
         min_value=1,
         description="Maximum number of pixels Earth Engine is allowed to read during the class count.",
     )
@@ -1316,6 +1320,7 @@ class CountByClass:
                         scale=scale_value,
                         tileScale=self.tile_scale,
                         maxPixels=self.max_pixels,
+                        bestEffort=True,
                     ).get("match")
 
                     class_count = ee.Number(ee.Algorithms.If(count, count, 0)).round()
@@ -1407,7 +1412,7 @@ class CountByClassIC:
     )
 
     max_pixels = knut.create_max_pixels_parameter(
-        default_value=1000000000,
+        default_value=knut.GEE_MAX_PIXELS,
         min_value=1,
         description="Maximum pixels per reduceRegions call.",
     )
@@ -1451,7 +1456,7 @@ class CountByClassIC:
                 reducer=ee.Reducer.sum(),
                 scale=scale_value,
                 tileScale=self.tile_scale,
-                maxPixels=self.max_pixels,
+                maxPixelsPerRegion=self.max_pixels,
             )
             reduced = class_img.reduceRegions(**reduce_params)
             t = element.get("system:time_start")

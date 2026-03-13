@@ -1664,6 +1664,10 @@ class ImageCollectionAggregator:
             "count": lambda ic: ic.count(),
         }
 
+        # Methods that use reduce() produce images with undefined nominalScale.
+        # Reproject to first image's projection/scale so downstream nodes get correct scale.
+        _REDUCE_METHODS = {"mean", "median", "min", "max", "sum", "mode", "count", "percentile"}
+
         # Apply aggregation
         try:
             if self.aggregation_method == "percentile":
@@ -1679,9 +1683,19 @@ class ImageCollectionAggregator:
                 image = image_collection.reduce(reducer)
             else:
                 image = aggregation_methods[self.aggregation_method](image_collection)
-            LOGGER.warning(
-                f"Successfully aggregated using '{self.aggregation_method}' method"
-            )
+
+            if self.aggregation_method in _REDUCE_METHODS:
+                first_img = image_collection.first()
+                ref_proj = first_img.select(0).projection()
+                scale_m = ref_proj.nominalScale()
+                image = image.reproject(crs=ref_proj, scale=scale_m)
+                LOGGER.warning(
+                    f"Aggregated using '{self.aggregation_method}', reprojected to first image scale ({scale_m}m)"
+                )
+            else:
+                LOGGER.warning(
+                    f"Successfully aggregated using '{self.aggregation_method}' method"
+                )
         except Exception as e:
             LOGGER.error(
                 f"Aggregation method '{self.aggregation_method}' failed: {e}. Falling back to 'first'."
@@ -1848,6 +1862,13 @@ class TimeWindowAggregator:
                 )
             reducer = ee.Reducer.percentile(percentiles)
 
+        _REDUCE_METHODS = {"mean", "median", "min", "max", "sum", "mode", "count", "percentile"}
+        need_reproject = self.aggregation_method in _REDUCE_METHODS
+        if need_reproject:
+            first_img = ic.first()
+            ref_proj = first_img.select(0).projection()
+            scale_m = ref_proj.nominalScale()
+
         images = []
         for start_py in period_starts:
             end_py = period_end(start_py, window)
@@ -1858,6 +1879,8 @@ class TimeWindowAggregator:
                 img = filtered.reduce(reducer)
             else:
                 img = aggregation_methods[self.aggregation_method](filtered)
+            if need_reproject:
+                img = img.reproject(crs=ref_proj, scale=scale_m)
             start_ms = int(start_py.timestamp() * 1000)
             end_ms = int(end_py.timestamp() * 1000)
             img = (
