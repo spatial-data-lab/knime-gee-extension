@@ -107,7 +107,7 @@ class GEEFeatureCollectionReader:
             ) from e
 
         asset_type = (asset or {}).get("type")
-        if asset_type != "FEATURE_COLLECTION":
+        if asset_type not in ("FEATURE_COLLECTION", "TABLE"):
             suggested = {
                 "IMAGE": "GEE Image Reader",
                 "IMAGE_COLLECTION": "GEE Image Collection Reader",
