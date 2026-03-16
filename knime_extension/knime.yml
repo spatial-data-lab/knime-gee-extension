@@ -4,7 +4,7 @@ author: Lingbo Liu,Tobias Koetter
 vendor: SDL, Harvard, Cambridge US
 description: Google Earth Engine Extension for KNIME # Human readable bundle name / description
 long_description: KNIME nodes for processing, analyzing and visualizing satellite imagery using Google Earth Engine.
-version: 0.9.1 # Version of this Python node extension
+version: 0.10.0 # Version of this Python node extension
 license_file: LICENSE.TXT # Best practice: put your LICENSE.TXT next to the knime.yml; otherwise you would need to change to path/to/LICENSE.txt
 extension_module: src/gee_ext # The .py Python module containing the nodes of your extension
 pixi_toml_path: pixi.toml # This is necessary for bundling, but not needed during development
