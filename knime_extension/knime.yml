@@ -10,4 +10,4 @@ extension_module: src/gee_ext # The .py Python module containing the nodes of yo
 pixi_toml_path: pixi.toml # This is necessary for bundling, but not needed during development
 feature_dependencies:
   - org.knime.features.geospatial 4.7.0 # enforce inclusion of the Geo data types feature
-  - org.knime.features.core 5.5.0 #ensure that this extension can only be used with 5.5 that uses Pixi
+  - org.knime.features.core 5.11.0 #ensure that this extension can only be used with 5.11 that uses Pixi
