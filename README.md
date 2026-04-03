@@ -1,6 +1,7 @@
 # KNIME Google Earth Engine Extension
 
 KNIME Google Earth Engine Extension
+<img width="1759" height="1219" alt="KNIME GEE Interface" src="https://github.com/user-attachments/assets/07f71ce7-9d57-4d89-bf6e-e45ecd808e0d" />
 
 
 ## Package Organization
@@ -15,6 +16,8 @@ KNIME Google Earth Engine Extension
 The extension will be is installable via the [KNIME Hub](https://hub.knime.com/) once it is publicly available. 
 If you want to test the latest version you can follow the instructions in the Setup section of the [Contribution guide](https://github.com/spatial-data-lab/knime-gee-extension/blob/main/CONTRIBUTING.md#setup).
 
+## Typical Workflow
+<img width="1759" height="789" alt="KNIME GEEworkflow" src="https://github.com/user-attachments/assets/7361f4a9-b516-45b9-a4f6-c8f7524684d3" />
 
 ## Contribute
 We are very happy about every contributor. Please read the [Contributors' Guide](https://github.com/spatial-data-lab/knime-gee-extension/blob/main/CONTRIBUTING.md) for more details.
