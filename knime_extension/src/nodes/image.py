@@ -5,6 +5,10 @@ Single-image I/O and processing: create, read, merge, clip, mask, conditional as
 
 import knime.extension as knext
 import util.knime_utils as knut
+from util.function_apply import (
+    DEFAULT_IMAGE_FUNCTION_SCRIPT,
+    run_image_script,
+)
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
@@ -24,6 +28,53 @@ __category = knext.category(
 
 # Node icon path
 __NODE_ICON_PATH = "icons/icon/image/"
+
+
+def _otsu_threshold_from_histogram(histogram):
+    """Compute an Otsu threshold from a GEE histogram dictionary.
+
+    Earth Engine has no stable public ``ee.Algorithms.Histogram_Otsu`` in the Python
+    API, so we implement Otsu's method directly from the histogram: maximize the
+    between-class variance over all possible split points and return the bucket mean
+    at the maximum.
+
+    Args:
+        histogram: An ``ee.Dictionary`` (or server object) with ``histogram`` (counts)
+            and ``bucketMeans`` keys, as produced by ``ee.Reducer.histogram``.
+
+    Returns:
+        An ``ee.Number`` with the threshold value (a bucket mean).
+    """
+    import ee
+
+    histogram = ee.Dictionary(histogram)
+    counts = ee.Array(histogram.get("histogram"))
+    means = ee.Array(histogram.get("bucketMeans"))
+    size = means.length().get([0])
+    total = counts.reduce(ee.Reducer.sum(), [0]).get([0])
+    total_sum = means.multiply(counts).reduce(ee.Reducer.sum(), [0]).get([0])
+    mean = total_sum.divide(total)
+
+    indices = ee.List.sequence(1, size)
+
+    def _bss(i):
+        a_counts = counts.slice(0, 0, i)
+        a_count = a_counts.reduce(ee.Reducer.sum(), [0]).get([0])
+        a_means = means.slice(0, 0, i)
+        a_mean = (
+            a_means.multiply(a_counts)
+            .reduce(ee.Reducer.sum(), [0])
+            .get([0])
+            .divide(a_count)
+        )
+        b_count = total.subtract(a_count)
+        b_mean = total_sum.subtract(a_count.multiply(a_mean)).divide(b_count)
+        return a_count.multiply(a_mean.subtract(mean).pow(2)).add(
+            b_count.multiply(b_mean.subtract(mean).pow(2))
+        )
+
+    bss = indices.map(_bss)
+    return means.sort(bss).get([-1])
 
 
 ############################################
@@ -608,6 +659,7 @@ class ImageGetInfo:
         """If enabled, extracts and adds nominal_scale (pixel resolution in meters) for each band.
         
         **Performance Note:**
+
         - This requires a separate GEE API call for each band
         - For images with many bands (e.g., Sentinel-2 with 20+ bands), this can be slow
 
@@ -1938,3 +1990,382 @@ class PixelsToFeatureCollection:
         return knut.export_gee_feature_collection_connection(
             output_fc, image_connection
         )
+
+
+############################################
+# Otsu Threshold
+############################################
+
+
+@knext.node(
+    name="GEE Otsu Threshold",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Ostu.png",
+    id="otsuthreshold",
+    after="pixelstofc",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="Single-band or multi-band image for automatic thresholding.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="Binary mask image (0/1) from Otsu threshold.",
+    port_type=gee_image_port_type,
+)
+class OtsuThreshold:
+    """Segments an image using Otsu's automatic histogram threshold.
+
+    Computes an Otsu threshold from a single-band histogram and outputs a binary mask
+    (1 = foreground side of the threshold). Works best on a single continuous band
+    (e.g. SAR backscatter, water indices, elevation). Two modes are available via
+    **Threshold mode**:
+
+    - **Global**: builds the histogram over the whole image footprint. Simple and fast,
+      but a single image-wide histogram may be poorly bimodal for heterogeneous scenes.
+    - **Adaptive (edge-constrained)**: implements the Donchyts et al. (2016) /
+      Markert et al. (2020) workflow. It makes a preliminary binary image, detects edges
+      (``CannyEdgeDetector``), keeps long connected edges (``connectedPixelCount``),
+      buffers them (``fastDistanceTransform``), samples the histogram only inside the
+      buffer (a cleaner bimodal histogram), then applies the resulting threshold to the
+      full band. More accurate when foreground/background are locally separable.
+
+    For dark foreground targets (e.g. open water in SAR VV/VH backscatter), set
+    **Foreground (1) side = Below (<)**.
+    """
+
+    threshold_mode = knext.StringParameter(
+        "Threshold mode",
+        "Global: histogram over the whole image footprint. Adaptive (edge-constrained): "
+        "sample the histogram only near detected water edges for a more accurate, locally "
+        "contextual threshold (Donchyts/Markert).",
+        default_value="Global",
+        enum=["Global", "Adaptive (edge-constrained)"],
+    )
+
+    band_name = knext.StringParameter(
+        "Band name",
+        "Band used for histogram and thresholding (e.g. VV).",
+        default_value="",
+    )
+
+    foreground_side = knext.StringParameter(
+        "Foreground (1) side",
+        "Which side of the Otsu threshold becomes 1. 'Above (>=)' marks bright "
+        "targets (default). 'Below (<)' marks dark targets such as open water in "
+        "SAR VV/VH backscatter, where water typically has low values.",
+        default_value="Above (>=)",
+        enum=["Above (>=)", "Below (<)"],
+    )
+
+    use_nominal_scale, scale = knut.create_nominal_scale_parameters(
+        max_value=1000,
+        scale_description="Scale in meters for histogram computation.",
+    )
+
+    output_band_name = knext.StringParameter(
+        "Output band name",
+        "Name of the binary output band (1 = foreground side of the threshold).",
+        default_value="water",
+    )
+
+    retain_original_bands = knext.BoolParameter(
+        "Retain original bands",
+        "If enabled, adds the mask band to the original image; otherwise outputs mask only. "
+        "(Global mode only; Adaptive mode always outputs the mask.)",
+        default_value=False,
+    ).rule(knext.OneOf(threshold_mode, ["Global"]), knext.Effect.SHOW)
+
+    # ---- Adaptive-mode parameters (shown only in Adaptive mode) ----
+    _ADAPTIVE = ["Adaptive (edge-constrained)"]
+
+    initial_threshold = knext.DoubleParameter(
+        "Initial threshold",
+        "Preliminary foreground/background split used to build the binary image for edge "
+        "detection (e.g. -16 dB for Sentinel-1 VV water).",
+        default_value=-16.0,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    edge_length = knext.IntParameter(
+        "Edge length",
+        "Minimum connected-pixel length for an edge to be kept (short edges are noise).",
+        default_value=20,
+        min_value=1,
+        max_value=1024,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    edge_buffer = knext.IntParameter(
+        "Edge buffer (meters)",
+        "Buffer distance around kept edges; the histogram is sampled within this buffer.",
+        default_value=300,
+        min_value=1,
+        max_value=100000,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    canny_threshold = knext.DoubleParameter(
+        "Canny threshold",
+        "Threshold for ee.Algorithms.CannyEdgeDetector (sensitivity of edge detection).",
+        default_value=1.0,
+        is_advanced=True,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    canny_sigma = knext.DoubleParameter(
+        "Canny sigma",
+        "Sigma of the Gaussian filter used in Canny edge detection.",
+        default_value=1.0,
+        is_advanced=True,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    canny_lt = knext.DoubleParameter(
+        "Canny lower threshold",
+        "Lower threshold applied to the detected edges before counting connected pixels.",
+        default_value=0.05,
+        is_advanced=True,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    connected_pixels = knext.IntParameter(
+        "Connected pixels",
+        "Maximum number of connected pixels to consider when measuring edge length.",
+        default_value=100,
+        min_value=1,
+        max_value=1024,
+        is_advanced=True,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    eight_connected = knext.BoolParameter(
+        "Eight-connected",
+        "Use 8-connectedness when counting connected edge pixels (default 4-connected).",
+        default_value=True,
+        is_advanced=True,
+    ).rule(knext.OneOf(threshold_mode, _ADAPTIVE), knext.Effect.SHOW)
+
+    max_pixels = knext.IntParameter(
+        "Max pixels",
+        "Maximum pixels for the reduceRegion histogram.",
+        default_value=100000000,
+        min_value=1000,
+        max_value=1000000000,
+        is_advanced=True,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, image_connection):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+        image = image_connection.image
+        band = (self.band_name or "").strip()
+        if not band:
+            names = image.bandNames().getInfo()
+            if not names:
+                raise ValueError("Image has no bands and Band name is empty.")
+            band = names[0]
+
+        selected = image.select(band)
+        scale_value = knut.resolve_scale(self.use_nominal_scale, self.scale, image)
+        is_adaptive = self.threshold_mode in self._ADAPTIVE
+
+        if is_adaptive:
+            # Edge-constrained histogram sampling (Donchyts/Markert).
+            image_proj = selected.projection()
+            binary = selected.lt(self.initial_threshold).rename("binary")
+            canny = ee.Algorithms.CannyEdgeDetector(
+                image=binary,
+                threshold=self.canny_threshold,
+                sigma=self.canny_sigma,
+            )
+            connected = (
+                canny.updateMask(canny)
+                .lt(self.canny_lt)
+                .connectedPixelCount(self.connected_pixels, self.eight_connected)
+            )
+            edges = connected.gte(self.edge_length)
+            edge_buffer_pixel = ee.Number(self.edge_buffer).divide(
+                image_proj.nominalScale()
+            )
+            buffered_edges = edges.fastDistanceTransform().lt(edge_buffer_pixel)
+            hist_source = selected.updateMask(buffered_edges)
+        else:
+            hist_source = selected
+
+        histogram = hist_source.reduceRegion(
+            reducer=ee.Reducer.histogram(maxBuckets=256),
+            geometry=selected.geometry(),
+            scale=scale_value,
+            bestEffort=True,
+            maxPixels=self.max_pixels,
+        )
+        threshold = _otsu_threshold_from_histogram(histogram.get(band))
+
+        if self.foreground_side == "Below (<)":
+            mask = selected.lt(threshold)
+        else:
+            mask = selected.gte(threshold)
+        mask = mask.rename(self.output_band_name).toByte()
+
+        # Adaptive mode always outputs the mask only.
+        if self.retain_original_bands and not is_adaptive:
+            result = image.addBands(mask)
+        else:
+            result = mask
+
+        LOGGER.warning(
+            "Otsu threshold (%s) on band %s (scale=%s, foreground=%s)",
+            self.threshold_mode,
+            band,
+            scale_value,
+            self.foreground_side,
+        )
+        return knut.export_gee_image_connection(result, image_connection)
+
+
+############################################
+# Image Remap
+############################################
+
+
+@knext.node(
+    name="GEE Image Remap",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Remap.png",
+    id="imageremap",
+    after="otsuthreshold",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="Categorical or classified image to remap.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="Image with remapped class values.",
+    port_type=gee_image_port_type,
+)
+class ImageRemap:
+    """Remaps categorical class codes in a band to new numeric values.
+
+    Unmapped pixel values become masked. Use **GEE Image View** palette settings for
+    display-only coloring without changing stored class values.
+    """
+
+    band_name = knext.StringParameter(
+        "Band name",
+        "Band containing class values to remap.",
+        default_value="",
+    )
+
+    from_values = knext.StringParameter(
+        "From values",
+        "Comma-separated source class values (e.g. '1,2,3').",
+        default_value="",
+    )
+
+    to_values = knext.StringParameter(
+        "To values",
+        "Comma-separated target values, same count as From values (e.g. '10,20,30').",
+        default_value="",
+    )
+
+    output_band_name = knext.StringParameter(
+        "Output band name",
+        "Name of the remapped band (empty = same as input band).",
+        default_value="",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, image_connection):
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+        image = image_connection.image
+        band = (self.band_name or "").strip()
+        if not band:
+            names = image.bandNames().getInfo()
+            if not names:
+                raise ValueError("Image has no bands and Band name is empty.")
+            band = names[0]
+
+        from_list = [float(x.strip()) for x in self.from_values.split(",") if x.strip()]
+        to_list = [float(x.strip()) for x in self.to_values.split(",") if x.strip()]
+        if len(from_list) != len(to_list) or not from_list:
+            raise ValueError(
+                "From values and To values must be non-empty lists of equal length."
+            )
+
+        out_band = (self.output_band_name or "").strip() or band
+        remapped = image.select(band).remap(from_list, to_list).rename(out_band)
+        other = [b for b in image.bandNames().getInfo() if b != band]
+        if other:
+            result = image.select(other).addBands(remapped)
+        else:
+            result = remapped
+
+        LOGGER.warning("Remapped %s: %s -> %s", band, from_list, to_list)
+        return knut.export_gee_image_connection(result, image_connection)
+
+
+############################################
+# Image Function Apply
+############################################
+
+
+@knext.node(
+    name="GEE Image Function Apply",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Imageapply.png",
+    id="imagefunctionapply",
+    after="imageremap",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="Input ee.Image to transform.",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="Output ee.Image from the user script.",
+    port_type=gee_image_port_type,
+)
+class ImageFunctionApply:
+    """Applies a user Python script to build a new ee.Image computation graph.
+
+    The script runs **once on the KNIME client** when the node executes. It does not
+    run Python on the Earth Engine servers; it must compose Earth Engine operators
+    (``unmix``, ``expression``, ``addBands``, etc.) into a deferred graph.
+
+    **Script contract**
+
+    - ``image``: the input ``ee.Image`` (injected).
+    - ``ee``: the Earth Engine Python module (injected).
+    - Define ``def apply(image): ...`` and set ``result = apply(image)``, or assign
+      ``result`` directly.
+    """
+
+    script = knext.MultilineStringParameter(
+        "Python script",
+        "Must set ``result`` to an ee.Image, or define apply(image) and "
+        "``result = apply(image)``. Only ``ee`` and safe builtins are available.",
+        default_value=DEFAULT_IMAGE_FUNCTION_SCRIPT,
+        number_of_lines=20,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, image_connection):
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+        image = image_connection.image
+        result = run_image_script(self.script or "", image)
+        LOGGER.warning("Image Function Apply executed")
+        return knut.export_gee_image_connection(result, image_connection)

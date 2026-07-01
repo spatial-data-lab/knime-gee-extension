@@ -5,6 +5,10 @@ Image collection I/O and processing: search, filter, composite, time series, map
 
 import knime.extension as knext
 import util.knime_utils as knut
+from util.function_apply import (
+    DEFAULT_IC_FUNCTION_SCRIPT,
+    run_image_collection_script,
+)
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
@@ -633,14 +637,28 @@ class ImageCollectionValueFilter:
         + knut.MASK_BY_BAND_FORMULA
         + " Or **bitwise0**: "
         + knut.MASK_BITWISE0_FORMULA
+        + "\n\n"
+        "**Cloud mask preset:** Per-image pixel mask using common Landsat QA_PIXEL or Sentinel-2 SCL recipes."
     )
 
     filter_mode = knext.StringParameter(
         "Mode",
-        "Filter by property = drop entire images; Mask by band value = updateMask per image.",
+        "Filter by property = drop entire images; Mask by band value = updateMask per image; "
+        "Cloud mask preset = common cloud/QA masks.",
         default_value="Filter by property",
-        enum=["Filter by property", "Mask by band value"],
+        enum=["Filter by property", "Mask by band value", "Cloud mask preset"],
     )
+
+    cloud_mask_preset = knext.StringParameter(
+        "Cloud mask preset",
+        "Quick mask for common QA bands.",
+        default_value="Landsat 8/9 C2 QA_PIXEL clear",
+        enum=[
+            "Landsat 8/9 C2 QA_PIXEL clear",
+            "Landsat 5/7 C2 QA_PIXEL clear",
+            "Sentinel-2 SCL exclude clouds (8–11)",
+        ],
+    ).rule(knext.OneOf(filter_mode, ["Cloud mask preset"]), knext.Effect.SHOW)
 
     property_name = knext.StringParameter(
         "Property name",
@@ -699,14 +717,39 @@ class ImageCollectionValueFilter:
         LOGGER = logging.getLogger(__name__)
         image_collection = ic_connection.image_collection
 
-        if self.filter_mode == "Mask by band value":
-            band = (self.band_name or "").strip()
+        filter_mode = self.filter_mode
+        band_name = self.band_name
+        band_operator = self.band_operator
+        band_value = self.band_value
+        property_name = self.property_name
+        property_operator = self.property_operator
+        property_value = self.property_value
+
+        if filter_mode == "Cloud mask preset":
+            preset = self.cloud_mask_preset
+            if preset in (
+                "Landsat 8/9 C2 QA_PIXEL clear",
+                "Landsat 5/7 C2 QA_PIXEL clear",
+            ):
+                band_name = "QA_PIXEL"
+                band_operator = "bitwise0"
+                band_value = 31
+            elif preset == "Sentinel-2 SCL exclude clouds (8–11)":
+                band_name = "SCL"
+                band_operator = "<"
+                band_value = 8
+            else:
+                raise ValueError(f"Unknown cloud mask preset: {preset}")
+            filter_mode = "Mask by band value"
+
+        if filter_mode == "Mask by band value":
+            band = (band_name or "").strip()
             if not band:
                 raise ValueError(
                     "Band name is required when Mode = Mask by band value."
                 )
-            val = self.band_value
-            if self.band_operator == "bitwise0":
+            val = band_value
+            if band_operator == "bitwise0":
                 and_val = int(val)
                 if and_val < 1:
                     raise ValueError(
@@ -733,7 +776,7 @@ class ImageCollectionValueFilter:
                     "==": lambda img: img.select(band).eq(th),
                     "!=": lambda img: img.select(band).neq(th),
                 }
-                op_fn = ops[self.band_operator]
+                op_fn = ops[band_operator]
 
                 def mask_image(img):
                     mask = op_fn(img)
@@ -743,14 +786,14 @@ class ImageCollectionValueFilter:
                 LOGGER.warning(
                     "Image Collection Value Filter (Mask by band): band=%s %s %s",
                     band,
-                    self.band_operator,
+                    band_operator,
                     val,
                 )
             return knut.export_gee_image_collection_connection(result, ic_connection)
 
         # Filter by property
-        prop_name = (self.property_name or "").strip()
-        val_str = (self.property_value or "").strip()
+        prop_name = (property_name or "").strip()
+        val_str = (property_value or "").strip()
         if not prop_name or val_str is None:
             LOGGER.warning(
                 "Property name or value empty; returning original collection."
@@ -759,35 +802,37 @@ class ImageCollectionValueFilter:
                 image_collection, ic_connection
             )
 
-        is_numeric = False
-        numeric_value = None
-        try:
-            numeric_value = float(val_str)
-            if (
-                numeric_value != float("inf")
-                and numeric_value != float("-inf")
-                and numeric_value == numeric_value
-            ):
-                is_numeric = True
-        except ValueError:
-            pass
+        def _numeric_or_none(s):
+            try:
+                v = float(s)
+                if v == float("inf") or v == float("-inf") or v != v:
+                    return None
+                return v
+            except ValueError:
+                return None
 
-        if self.property_operator == "Equals":
-            the_filter = (
-                ee.Filter.eq(prop_name, numeric_value)
-                if is_numeric
-                else ee.Filter.eq(prop_name, val_str)
-            )
-        elif self.property_operator == "Not Equals":
-            the_filter = (
-                ee.Filter.neq(prop_name, numeric_value)
-                if is_numeric
-                else ee.Filter.neq(prop_name, val_str)
-            )
+        numeric_value = _numeric_or_none(val_str)
+
+        if property_operator in ("Equals", "Not Equals"):
+            # Metadata may be string or number (e.g. system:index "2016" vs 2016).
+            eq_filters = [ee.Filter.eq(prop_name, val_str)]
+            if numeric_value is not None:
+                eq_filters.append(ee.Filter.eq(prop_name, numeric_value))
+            if len(eq_filters) == 1:
+                eq_any = eq_filters[0]
+            else:
+                eq_any = ee.Filter.Or(eq_filters[0], eq_filters[1])
+            if property_operator == "Equals":
+                the_filter = eq_any
+            else:
+                try:
+                    the_filter = ee.Filter.not_(eq_any)
+                except Exception:
+                    the_filter = ee.Filter.Not(eq_any)
         else:
-            if not is_numeric:
+            if numeric_value is None:
                 raise ValueError(
-                    f"Operator '{self.property_operator}' requires a numeric value, got '{val_str}'."
+                    f"Operator '{property_operator}' requires a numeric value, got '{val_str}'."
                 )
             operator_map = {
                 "Greater Than": ee.Filter.gt,
@@ -795,13 +840,13 @@ class ImageCollectionValueFilter:
                 "Greater or Equal": ee.Filter.gte,
                 "Less or Equal": ee.Filter.lte,
             }
-            the_filter = operator_map[self.property_operator](prop_name, numeric_value)
+            the_filter = operator_map[property_operator](prop_name, numeric_value)
 
         image_collection = image_collection.filter(the_filter)
         LOGGER.warning(
             "Image Collection Value Filter (by property): %s %s %s",
             prop_name,
-            self.property_operator,
+            property_operator,
             val_str,
         )
         return knut.export_gee_image_collection_connection(
@@ -1146,6 +1191,7 @@ class ImageCollectionMultiBandCalculator:
     For property names use **prop(\"BX2\")**, **prop(\"BX3\")** (keep the quotes around BX2/BX3).
 
     Examples:
+
     - 1 slot: expression ``BX1 * 0.0000275 - 0.2``, rows ``SR_B1; SR_B2; SR_B3``
     - 3 slots: expression ``BX1 * prop(\"BX2\") + prop(\"BX3\")``, rows
       ``SR_B1, REFLECTANCE_MULT_BAND_1, REFLECTANCE_ADD_BAND_1; SR_B2, REFLECTANCE_MULT_BAND_2, REFLECTANCE_ADD_BAND_2``
@@ -1397,31 +1443,40 @@ class ImageCollectionBandSelector:
 )
 @knext.input_port(
     name="GEE Image Collection Connection",
-    description="GEE Image Collection to select/rename bands.",
+    description="GEE Image Collection with bands to rename.",
     port_type=gee_image_collection_port_type,
 )
 @knext.output_port(
     name="GEE Image Collection Connection",
-    description="GEE Image Collection with selected/renamed bands.",
+    description="GEE Image Collection with renamed bands (unlisted bands are preserved).",
     port_type=gee_image_collection_port_type,
 )
 class ImageCollectionBandRenamer:
-    """Select bands by name and optionally rename them for each image in the collection.
+    """Renames bands for each image in the collection; other bands are kept unchanged.
 
-    This node selects and optionally renames bands using Band names and New names parameters, and is commonly used to standardize band naming across sensors.
+    This node renames specified bands using **Band names** and **New names** parameters.
+    Bands not listed in **Band names** remain on the image with their original names
+    (same behavior as **GEE Image Band Renamer**).
 
-    Comma-separated band names to keep; optionally provide new names (same count) to rename.
+    **Examples:**
+
+    - Rename RGB only: ``SR_B2, SR_B3, SR_B4`` → ``Blue, Green, Red`` (``SR_B5`` etc. stay)
+    - Rename all bands: leave **Band names** empty and provide one new name per band
+
+    **Note:** **New names** count must match the number of bands being renamed.
+    To drop bands, use **GEE Image Collection Band Selector** upstream instead.
     """
 
     band_names = knext.StringParameter(
         "Band names",
-        "Comma-separated band names to keep (e.g. SR_B2, SR_B3).",
+        "Comma-separated band names to rename (e.g. 'SR_B2, SR_B3, SR_B4'). "
+        "Leave empty to rename all bands. Unlisted bands are preserved.",
         default_value="SR_B2, SR_B3, SR_B4",
     )
 
     new_names = knext.StringParameter(
         "New names",
-        "Comma-separated new names (same count as selected bands). Leave empty to keep original names.",
+        "Comma-separated new names (same count as bands to rename). Required.",
         default_value="Blue, Green, Red",
     )
 
@@ -1438,32 +1493,60 @@ class ImageCollectionBandRenamer:
 
         LOGGER = logging.getLogger(__name__)
         ic = ic_connection.image_collection
+
         bands_str = (self.band_names or "").strip()
-        if not bands_str:
-            raise ValueError("Band names are required.")
-        band_list = [b.strip() for b in bands_str.split(",") if b.strip()]
         new_str = (self.new_names or "").strip()
-        new_list = (
-            [n.strip() for n in new_str.split(",") if n.strip()] if new_str else []
-        )
-        if new_list and len(new_list) != len(band_list):
+        if not new_str:
+            raise ValueError("New names must be provided.")
+
+        new_list = [n.strip() for n in new_str.split(",") if n.strip()]
+
+        try:
+            sample_bands = ic.first().bandNames().getInfo()
+        except Exception as exc:
             raise ValueError(
-                "New names count must match band names count when renaming."
-            )
-        ee_band_list = ee.List(band_list)
-        if new_list:
-            ee_new_list = ee.List(new_list)
+                "Could not read band names from the image collection."
+            ) from exc
 
-            def map_fn(img):
-                return img.select(ee_band_list).rename(ee_new_list)
-
+        if bands_str:
+            band_list = [b.strip() for b in bands_str.split(",") if b.strip()]
+            if not band_list:
+                raise ValueError("Band names cannot be empty when provided.")
+            missing = [b for b in band_list if b not in sample_bands]
+            if missing:
+                raise ValueError(f"Bands not found in image collection: {missing}")
+            bands_to_process = band_list
         else:
+            bands_to_process = sample_bands
 
-            def map_fn(img):
-                return img.select(ee_band_list)
+        if len(new_list) != len(bands_to_process):
+            raise ValueError(
+                f"Number of new names ({len(new_list)}) must match "
+                f"number of bands to rename ({len(bands_to_process)})."
+            )
+
+        bands_to_rename_ee = ee.List(bands_to_process)
+
+        def map_fn(img):
+            img = ee.Image(img)
+            renamed = img.select([bands_to_process[0]]).rename(new_list[0])
+            for old_name, new_name in zip(bands_to_process[1:], new_list[1:]):
+                renamed = renamed.addBands(img.select([old_name]).rename(new_name))
+            other_bands = img.bandNames().removeAll(bands_to_rename_ee)
+            return ee.Image(
+                ee.Algorithms.If(
+                    other_bands.size().gt(0),
+                    img.select(other_bands).addBands(renamed),
+                    renamed,
+                )
+            )
 
         result = ic.map(map_fn)
-        LOGGER.warning("Image Collection Band Renamer applied.")
+        LOGGER.warning(
+            "Image Collection Band Renamer: renamed %s -> %s (other bands preserved)",
+            bands_to_process,
+            new_list,
+        )
         return knut.export_gee_image_collection_connection(result, ic_connection)
 
 
@@ -1482,12 +1565,12 @@ class ImageCollectionBandRenamer:
 )
 @knext.input_port(
     name="GEE Image Collection (primary)",
-    description="First Image Collection (e.g. Landsat 8).",
+    description="First Image Collection (e.g. Landsat 8). Defines the band schema the secondary collection must match.",
     port_type=gee_image_collection_port_type,
 )
 @knext.input_port(
     name="GEE Image Collection (secondary)",
-    description="Second Image Collection to merge (e.g. Landsat 7 with bands renamed to match).",
+    description="Second Image Collection to merge. Band names and count must match the primary collection (use Band Selector upstream).",
     port_type=gee_image_collection_port_type,
 )
 @knext.output_port(
@@ -1504,18 +1587,29 @@ class ImageCollectionMerger:
     collections. Use this to combine multi-sensor data (e.g. Landsat 8 + Landsat 7)
     before aggregating to a single composite.
 
-    **Requirements:**
+    **Band names must match (homogeneous collection):**
 
-    - Both collections must have the **same band names and count** (use **Image
-      Collection Band Selector** and **Image Collection Band Renamer** upstream so
-      the secondary collection matches the primary).
+    Every image in the merged collection must have the **same band names and count**.
+    ``merge()`` may succeed even when bands differ, but downstream nodes (e.g.
+    **Image Collection Aggregator**, reducers, exports) require a homogeneous
+    collection and will fail with "incompatible bands" if L5/L7 and L8 images still
+    carry different native QA/ST/SR bands.
+
+    **Recommended:** place **Image Collection Band Selector** on each branch **before**
+    this node and keep only the bands you need (e.g. a single ``NDVI`` band computed
+    per sensor). That avoids cross-sensor band-name mismatches. Use **Image Collection
+    Band Renamer** when you must align different band names to a common schema (e.g.
+    rename L7 SR bands to match L8 names before selecting the same six reflectance bands).
 
     **Typical workflow:**
 
-    1. Build L8 pipeline: filter → cloud mask → scaling → Band Selector (e.g. 6 bands).
-    2. Build L7 pipeline: filter → cloud mask → scaling → Band Renamer (L7 names → L8 names).
-    3. Connect both to this node (L8 primary, L7 secondary).
-    4. Downstream: Image Collection Aggregator (median), then optional clip.
+    1. Build L8 pipeline: filter → cloud mask → index/band calc → **Band Selector** (e.g. ``NDVI`` only).
+    2. Build L7 pipeline: filter → cloud mask → index/band calc → **Band Selector** (same band names as L8).
+    3. Connect both to this node (L8 primary, L7 secondary); chain another Merger for a third sensor if needed.
+    4. Downstream: Image Collection Aggregator (mean/median), then optional clip.
+
+    **Note:** This is different from **GEE Image Band Merger**, which stacks bands from two
+    *images* onto one image and allows different band names (duplicates get a suffix).
     """
 
     def configure(self, configure_context, input_schema1, input_schema2):
@@ -1598,6 +1692,25 @@ class ImageCollectionAggregator:
     - Use **mean** for temporal averaging
     - Use **mosaic** for seamless image mosaicking
     - Apply filters before aggregation to improve results
+
+    **IMPORTANT - reducer methods drop the footprint and native projection:**
+
+    Reducer-based methods (**mean, median, min, max, sum, mode, count, percentile**)
+    combine all images pixel-wise and return a *scale-free, unbounded* composite:
+    the result has **no footprint geometry** and its **native projection/scale is
+    lost** (nominalScale degrades to ~111 km / 1 degree). The pixel-keeping methods
+    (**first, last, mosaic**) keep a real scene footprint and projection.
+
+    Consequences when using mean/median/etc.:
+
+    - **Clip to your ROI** with **GEE Image Clipper** immediately after this node.
+      Reducer output has no scene footprint; without clip, downstream nodes see an
+      unbounded composite (GEE default ~1° pixels). This is GEE behavior, not a View bug.
+    - Prefer **Spatial Filter (clip to ROI)** on the collection *before* aggregating so
+      the IC does not include distant swaths with no data over your study area.
+    - For a quick smoke test, use **first** or **last** instead of median.
+    - After **Image Clipper**, reproject to a fixed CRS/scale if you need a pinned grid
+      before band math or export.
     """
 
     aggregation_method = knext.StringParameter(
@@ -1664,19 +1777,6 @@ class ImageCollectionAggregator:
             "count": lambda ic: ic.count(),
         }
 
-        # Methods that use reduce() produce images with undefined nominalScale.
-        # Reproject to first image's projection/scale so downstream nodes get correct scale.
-        _REDUCE_METHODS = {
-            "mean",
-            "median",
-            "min",
-            "max",
-            "sum",
-            "mode",
-            "count",
-            "percentile",
-        }
-
         # Apply aggregation
         try:
             if self.aggregation_method == "percentile":
@@ -1693,18 +1793,9 @@ class ImageCollectionAggregator:
             else:
                 image = aggregation_methods[self.aggregation_method](image_collection)
 
-            if self.aggregation_method in _REDUCE_METHODS:
-                first_img = image_collection.first()
-                ref_proj = first_img.select(0).projection()
-                scale_m = ref_proj.nominalScale()
-                image = image.reproject(crs=ref_proj, scale=scale_m)
-                LOGGER.warning(
-                    f"Aggregated using '{self.aggregation_method}', reprojected to first image scale ({scale_m}m)"
-                )
-            else:
-                LOGGER.warning(
-                    f"Successfully aggregated using '{self.aggregation_method}' method"
-                )
+            LOGGER.warning(
+                f"Successfully aggregated using '{self.aggregation_method}' method"
+            )
         except Exception as e:
             LOGGER.error(
                 f"Aggregation method '{self.aggregation_method}' failed: {e}. Falling back to 'first'."
@@ -1871,22 +1962,6 @@ class TimeWindowAggregator:
                 )
             reducer = ee.Reducer.percentile(percentiles)
 
-        _REDUCE_METHODS = {
-            "mean",
-            "median",
-            "min",
-            "max",
-            "sum",
-            "mode",
-            "count",
-            "percentile",
-        }
-        need_reproject = self.aggregation_method in _REDUCE_METHODS
-        if need_reproject:
-            first_img = ic.first()
-            ref_proj = first_img.select(0).projection()
-            scale_m = ref_proj.nominalScale()
-
         images = []
         for start_py in period_starts:
             end_py = period_end(start_py, window)
@@ -1897,8 +1972,6 @@ class TimeWindowAggregator:
                 img = filtered.reduce(reducer)
             else:
                 img = aggregation_methods[self.aggregation_method](filtered)
-            if need_reproject:
-                img = img.reproject(crs=ref_proj, scale=scale_m)
             start_ms = int(start_py.timestamp() * 1000)
             end_ms = int(end_py.timestamp() * 1000)
             img = (
@@ -3090,7 +3163,7 @@ class ICCovarianceCorrelation:
         if b1 == b2:
             raise ValueError("First and second band names must differ.")
 
-        # Match book: map each image to array (1 band = 2-element vector), then reduce covariance
+        # Map each image to array (1 band = 2-element vector), then reduce covariance
         ic_two = ic.select([b1, b2]).map(lambda img: img.toArray())
         reducer = ee.Reducer.covariance()
         cov_array_image = ic_two.reduce(reducer, parallelScale=self.parallel_scale)
@@ -3124,3 +3197,61 @@ class ICCovarianceCorrelation:
             self.output_mode,
         )
         return knut.export_gee_image_connection(result, ic_connection)
+
+
+############################################
+# Image Collection Function Apply
+############################################
+
+
+@knext.node(
+    name="GEE Image Collection Function Apply",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Imageapply.png",
+    id="imagecollectionfunctionapply",
+    after="imagecollectioncovariancecorrelation",
+)
+@knext.input_port(
+    name="GEE Image Collection Connection",
+    description="Input ee.ImageCollection to transform.",
+    port_type=gee_image_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Image Collection Connection",
+    description="Output ee.ImageCollection from the user script.",
+    port_type=gee_image_collection_port_type,
+)
+class ImageCollectionFunctionApply:
+    """Applies a user Python script to each image in a collection (``map``).
+
+    The script runs **once on the KNIME client** to build an ``image_collection.map``
+    graph. Python is not executed per pixel on Earth Engine servers.
+
+    **Script contract**
+
+    - ``image_collection``: input ``ee.ImageCollection`` (injected).
+    - ``ee``: Earth Engine Python module (injected).
+    - Define ``def apply(image): ...`` and
+      ``result = image_collection.map(apply)``, or assign ``result`` directly.
+    """
+
+    script = knext.MultilineStringParameter(
+        "Python script",
+        "Must set ``result`` to an ee.ImageCollection, or define apply(image) and "
+        "``result = image_collection.map(apply)``.",
+        default_value=DEFAULT_IC_FUNCTION_SCRIPT,
+        number_of_lines=20,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, ic_connection):
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+        ic = ic_connection.image_collection
+        result = run_image_collection_script(self.script or "", ic)
+        LOGGER.warning("Image Collection Function Apply executed")
+        return knut.export_gee_image_collection_connection(result, ic_connection)

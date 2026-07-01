@@ -265,6 +265,7 @@ class LinearRegression:
     - Training image bands (in order):
       1. Independent variables (X₁, X₂, ..., Xₙ)
       2. **Dependent variable (Y) - MUST BE THE LAST BAND**
+
     - Region: FeatureCollection or Geometry defining the training area
     - **Important**: Use **GEE Image Band Merger** node to ensure the dependent variable
       is placed as the last band before this node.
@@ -839,6 +840,7 @@ class ImageRegressionPredictor:
     **Output:**
 
     The node outputs an image with one band:
+
     - **Predicted band**: Continuous numeric values (configurable band name, default: 'predicted')
 
     **Key Differences from Image Class Predictor:**
@@ -977,6 +979,7 @@ class FeatureCollectionRegressionPredictor:
 
     - **Validation**: Use training data FeatureCollection, then use this node to predict values
       and compare with actual target values using **Regression Scorer**
+
     - **Independent Testing**: Apply trained regression model to independent test datasets
     - **Cross-Validation**: Predict on held-out validation sets
     - **Spatial Validation**: Predict on features from different regions or time periods

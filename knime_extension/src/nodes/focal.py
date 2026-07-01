@@ -482,6 +482,7 @@ class GLCMTexture:
     ``<band>_<metric>`` (e.g. ``R_contrast``, ``G_entropy``).
 
     **Haralick (14):**
+
     - **ASM** (f1): Angular Second Moment; repeated pairs
     - **CONTRAST** (f2): Local contrast
     - **CORR** (f3): Correlation between pixel pairs
@@ -498,6 +499,7 @@ class GLCMTexture:
     - **MAXCORR** (f14): Max Correlation Coefficient (not computed)
 
     **Conners (4):**
+
     - **DISS**: Dissimilarity
     - **INERTIA**: Inertia
     - **SHADE**: Cluster Shade
@@ -617,7 +619,7 @@ class SpatialStatistics:
 
     **Kernel**
 
-    - A square kernel with **center weight 0** and neighbor weights 1 (book-style
+    - A square kernel with **center weight 0** and neighbor weights 1 (standard
       9×9: radius 4 → 9×9). Only non-center pixels are used in the formulas.
 
     **Typical use**
@@ -738,178 +740,198 @@ class SpatialStatistics:
             raise
 
 
-# ############################################
-# # Image Morphology
-# ############################################
+############################################
+# Image Morphology
+############################################
 
 
-# @knext.node(
-#     name="GEE Image Morphology",
-#     node_type=knext.NodeType.MANIPULATOR,
-#     category=__category,
-#     icon_path=__NODE_ICON_PATH + "ImageMorphology.png",
-#     id="imagemorphology",
-#     after="imagevaluefilter",
-# )
-# @knext.input_port(
-#     name="GEE Image Connection",
-#     description="GEE Image connection with embedded image object. Input should be a single-band binary image (0 and >0 values).",
-#     port_type=gee_image_port_type,
-# )
-# @knext.output_port(
-#     name="GEE Image Connection",
-#     description="GEE Image connection with morphology operation applied (binary 0/1 output).",
-#     port_type=gee_image_port_type,
-# )
-# class ImageMorphology:
-#     """Applies morphological operations to a binary image.
+@knext.node(
+    name="GEE Image Morphology",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "Morphology.png",
+    id="imagemorphology",
+    after="spatialstatistics",
+)
+@knext.input_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with embedded image object. Input should be a single-band binary image (0 and >0 values).",
+    port_type=gee_image_port_type,
+)
+@knext.output_port(
+    name="GEE Image Connection",
+    description="GEE Image connection with morphology operation applied (binary 0/1 output).",
+    port_type=gee_image_port_type,
+)
+class ImageMorphology:
+    """Applies morphological operations to a binary image.
 
-#     This node applies opening or closing using Kernel radius, Kernel shape, and operation toggles,
-#     and is commonly used to clean up binary masks.
+    This node applies opening or closing using Kernel radius, Kernel shape, and operation toggles,
+    and is commonly used to clean up binary masks (remove noise, fill small holes).
+    """
 
-#     This node performs morphological operations on **binary images** (0 and >0 values).
-#     The input is binarized to 0/1 (>0 => 1, else 0) for processing; please ensure
-#     your upstream node has produced a binary mask (e.g., via Image Value Filter).
-#     The original mask is preserved so morphology will not expand into previously
-#     masked-out areas.
+    kernel_radius = knext.IntParameter(
+        "Kernel radius (pixels)",
+        "Radius of the morphological kernel in pixels. A radius of 1 creates a 3x3 kernel, radius of 2 creates a 5x5 kernel, etc.",
+        default_value=1,
+        min_value=1,
+        max_value=10,
+    )
 
-#     **Morphological Operations:**
+    kernel_shape = knext.StringParameter(
+        "Kernel shape",
+        "Shape of the morphological kernel.",
+        default_value="circle",
+        enum=["circle", "square"],
+    )
 
-#     - **Opening**: Erosion followed by dilation. Removes small objects and smooths boundaries.
-#     - **Closing**: Dilation followed by erosion. Fills small holes and connects nearby objects.
+    do_open = knext.BoolParameter(
+        "Apply opening",
+        "If enabled, applies opening operation (erosion followed by dilation). Removes small objects and smooths boundaries.",
+        default_value=False,
+    )
 
-#     **Kernel Types:**
+    do_close = knext.BoolParameter(
+        "Apply closing",
+        "If enabled, applies closing operation (dilation followed by erosion). Fills small holes and connects nearby objects.",
+        default_value=False,
+    )
 
-#     - **Circle**: Circular kernel (approximated by pixels)
-#     - **Square**: Square kernel (3x3, 5x5, etc.)
+    band_name = knext.StringParameter(
+        "Band name",
+        "Band to treat as binary mask (empty = first band). Multi-band images use one band only.",
+        default_value="",
+    )
 
-#     **Use Cases:**
+    output_band_name = knext.StringParameter(
+        "Output band name",
+        "Name of the output morphology band (0/1).",
+        default_value="morph",
+    )
 
-#     - Remove noise from binary classification results
-#     - Fill small holes in segmented regions
-#     - Smooth boundaries of classified objects
-#     - Clean up binary masks before vectorization
-#     - Prepare binary images for further processing
+    use_nominal_scale = knext.BoolParameter(
+        "Use NominalScale",
+        "Lock the morphology output to the input image's nominal scale (native "
+        "resolution). Focal operations otherwise produce a 'scale-free' image whose "
+        "resolution is decided by whoever requests it, so the map View (zoom "
+        "dependent) and reduceToVectors (Pixels to FC) disagree. ONLY enable this "
+        "when the input has a meaningful projection (e.g. a single scene, or a "
+        "composite that was reprojected with Resample/Reproject). After an IC "
+        "Aggregator median/mean the native projection is lost and nominalScale "
+        "degrades to ~111 km, so leave this OFF and set Scale (meters) below.",
+        default_value=False,
+    )
 
-#     **Common Workflow:**
+    output_scale = knext.IntParameter(
+        "Scale (meters)",
+        "Pixel size the morphology output is locked to. Only used when Use "
+        "NominalScale is disabled. Use the native resolution of the source data "
+        "(e.g. 30 for Landsat, 10 for Sentinel-2). The kernel radius (in pixels) is "
+        "evaluated at this scale, and both the View and downstream vectorization use it.",
+        default_value=30,
+        min_value=1,
+        max_value=10000,
+    ).rule(knext.OneOf(use_nominal_scale, [False]), knext.Effect.SHOW)
 
-#     1. Create binary image: Use **Image Value Filter** to create binary mask (e.g., NDVI > 0.5)
-#     2. Apply morphology: Use this node to clean up the binary image
-#     3. Vectorize: Use **Pixels to Feature Collection** to convert to polygons
+    def configure(self, configure_context, input_schema):
+        return None
 
-#     **Note:** Both opening and closing can be applied in sequence. The order matters:
-#     - Opening first, then closing: Removes noise then fills holes
-#     - Closing first, then opening: Fills holes then removes noise
-#     """
+    def execute(
+        self,
+        exec_context: knext.ExecutionContext,
+        image_connection,
+    ):
+        import ee
+        import logging
 
-#     kernel_radius = knext.IntParameter(
-#         "Kernel radius (pixels)",
-#         "Radius of the morphological kernel in pixels. A radius of 1 creates a 3x3 kernel, radius of 2 creates a 5x5 kernel, etc.",
-#         default_value=1,
-#         min_value=1,
-#         max_value=10,
-#     )
+        LOGGER = logging.getLogger(__name__)
 
-#     kernel_shape = knext.StringParameter(
-#         "Kernel shape",
-#         "Shape of the morphological kernel.",
-#         default_value="circle",
-#         enum=["circle", "square"],
-#     )
+        image = image_connection.image
+        band = (self.band_name or "").strip()
+        if band:
+            image = image.select([band])
+        else:
+            names = image.bandNames().getInfo()
+            if names:
+                image = image.select([names[0]])
 
-#     do_open = knext.BoolParameter(
-#         "Apply opening",
-#         "If enabled, applies opening operation (erosion followed by dilation). Removes small objects and smooths boundaries.",
-#         default_value=False,
-#     )
+        if not self.do_open and not self.do_close:
+            raise ValueError(
+                "At least one morphological operation must be enabled (opening or closing)."
+            )
 
-#     do_close = knext.BoolParameter(
-#         "Apply closing",
-#         "If enabled, applies closing operation (dilation followed by erosion). Fills small holes and connects nearby objects.",
-#         default_value=False,
-#     )
+        try:
+            original_mask = image.mask()
+            # Capture the input image's geometry BEFORE the focal operations.
+            # focal_min/focal_max turn the result into a "scale-free",
+            # *unbounded* image (geometry resets to the global extent). If we
+            # don't restore the original bounds, downstream reduceToVectors
+            # (Pixels to FC) tries to vectorize the whole world at the requested
+            # scale, blows past maxPixels, and silently falls back to a much
+            # coarser scale -> one huge, blocky polygon (while the tiled View
+            # still looks correct because it only renders the current viewport).
+            input_geometry = image.geometry()
+            bin01 = image.gt(0).rename("bin01")
 
-#     output_band_name = knext.StringParameter(
-#         "Output band name",
-#         "Name of the output morphology band (0/1).",
-#         default_value="morph",
-#     )
+            if self.kernel_shape == "circle":
+                kernel = ee.Kernel.circle(self.kernel_radius, "pixels", True)
+            else:
+                kernel = ee.Kernel.square(self.kernel_radius, "pixels", True)
 
-#     def configure(self, configure_context, input_schema):
-#         return None
+            out = bin01
 
-#     def execute(
-#         self,
-#         exec_context: knext.ExecutionContext,
-#         image_connection,
-#     ):
-#         import ee
-#         import logging
+            if self.do_open:
+                out = out.focal_min(self.kernel_radius, kernel=kernel).focal_max(
+                    self.kernel_radius, kernel=kernel
+                )
+                LOGGER.warning(
+                    "Applied opening: %s kernel radius=%s",
+                    self.kernel_shape,
+                    self.kernel_radius,
+                )
 
-#         LOGGER = logging.getLogger(__name__)
+            if self.do_close:
+                out = out.focal_max(self.kernel_radius, kernel=kernel).focal_min(
+                    self.kernel_radius, kernel=kernel
+                )
+                LOGGER.warning(
+                    "Applied closing: %s kernel radius=%s",
+                    self.kernel_shape,
+                    self.kernel_radius,
+                )
 
-#         # Get image from connection
-#         image = image_connection.image
+            morph01 = (
+                out.gt(0)
+                .rename(self.output_band_name)
+                .toByte()
+                .updateMask(original_mask)
+                .clip(input_geometry)
+            )
 
-#         # Validate that at least one operation is enabled
-#         if not self.do_open and not self.do_close:
-#             raise ValueError(
-#                 "At least one morphological operation must be enabled (opening or closing)."
-#             )
+            # Lock the focal result onto a fixed grid at the chosen scale.
+            # Use the CRS as a STRING (.crs()) + scale in meters: passing the
+            # Projection object instead would carry its embedded transform
+            # (often degraded to ~1 degree after a median/mean composite, which
+            # loses the native projection) and reproject to that coarse grid.
+            # With a CRS string, "scale" is honored, so both the View and
+            # reduceToVectors evaluate the kernel at this exact resolution and
+            # agree. When inheriting, resolve_scale returns the input's
+            # nominalScale (only meaningful if the input has a real projection).
+            target_crs = image.projection().crs()
+            target_scale = knut.resolve_scale(
+                self.use_nominal_scale, self.output_scale, image
+            )
+            morph01 = morph01.reproject(crs=target_crs, scale=target_scale)
 
-#         try:
-#             # Keep original mask so we don't expand into masked-out regions
-#             original_mask = image.mask()
+            LOGGER.warning(
+                "Morphology: opening=%s closing=%s output=%s",
+                self.do_open,
+                self.do_close,
+                self.output_band_name,
+            )
 
-#             # Step 1: Binarize to 0/1
-#             # Preserve existing mask; >0 => 1, otherwise 0
-#             bin01 = image.gt(0).rename("bin01")  # 0/1 with original mask
+            return knut.export_gee_image_connection(morph01, image_connection)
 
-#             # Step 2: Define kernel
-#             if self.kernel_shape == "circle":
-#                 # Approximate circular kernel (True means include center)
-#                 kernel = ee.Kernel.circle(self.kernel_radius, "pixels", True)
-#             else:
-#                 # Default square kernel (3x3, 5x5...)
-#                 kernel = ee.Kernel.square(self.kernel_radius, "pixels", True)
-
-#             # Step 3: Apply morphological operations
-#             out = bin01
-
-#             if self.do_open:
-#                 # Opening: erosion (min) followed by dilation (max)
-#                 out = out.focal_min(self.kernel_radius, kernel=kernel).focal_max(
-#                     self.kernel_radius, kernel=kernel
-#                 )
-#                 LOGGER.warning(
-#                     f"Applied opening operation with {self.kernel_shape} kernel (radius={self.kernel_radius})"
-#                 )
-
-#             if self.do_close:
-#                 # Closing: dilation (max) followed by erosion (min)
-#                 out = out.focal_max(self.kernel_radius, kernel=kernel).focal_min(
-#                     self.kernel_radius, kernel=kernel
-#                 )
-#                 LOGGER.warning(
-#                     f"Applied closing operation with {self.kernel_shape} kernel (radius={self.kernel_radius})"
-#                 )
-
-#             # Ensure output is 0/1 (focal operations should maintain 0/1, but explicit normalization is safer)
-#             morph01 = (
-#                 out.gt(0)
-#                 .rename(self.output_band_name)
-#                 .toByte()
-#                 .updateMask(original_mask)
-#             )  # 0 or 1, with original mask
-
-#             LOGGER.warning(
-#                 f"Successfully applied morphology: opening={self.do_open}, closing={self.do_close}, "
-#                 f"kernel={self.kernel_shape}, radius={self.kernel_radius}, "
-#                 f"output_band={self.output_band_name}"
-#             )
-
-#             return knut.export_gee_image_connection(morph01, image_connection)
-
-#         except Exception as e:
-#             LOGGER.error(f"Morphology operation failed: {e}")
-#             raise
+        except Exception as e:
+            LOGGER.error("Morphology operation failed: %s", e)
+            raise

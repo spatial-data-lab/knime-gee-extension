@@ -570,13 +570,18 @@ def export_gee_image_connection(image, existing_connection):
     return GEEImageConnectionObject(spec=spec, credentials=credentials, image=image)
 
 
-def export_gee_feature_collection_connection(feature_collection, existing_connection):
+def export_gee_feature_collection_connection(
+    feature_collection, existing_connection, label_property=None
+):
     """
     Export a GEE FeatureCollection as a specialized FeatureCollection connection object.
 
     Args:
         feature_collection: The GEE FeatureCollection object
         existing_connection: Existing connection object to get credentials and project_id from
+        label_property: Optional target/label column name to carry forward (e.g. from a
+            Predictor so the Scorer can read it automatically). If None, an existing
+            label_property on the incoming connection is preserved when available.
 
     Returns:
         GEEFeatureCollectionConnectionObject: Specialized FeatureCollection connection object
@@ -590,8 +595,15 @@ def export_gee_feature_collection_connection(feature_collection, existing_connec
     project_id = existing_connection.spec.project_id
     spec = GEEFeatureCollectionObjectSpec(project_id)
 
+    # Preserve label_property already on the incoming connection if not overridden
+    if label_property is None:
+        label_property = getattr(existing_connection, "label_property", None)
+
     return GEEFeatureCollectionConnectionObject(
-        spec=spec, credentials=credentials, feature_collection=feature_collection
+        spec=spec,
+        credentials=credentials,
+        feature_collection=feature_collection,
+        label_property=label_property,
     )
 
 

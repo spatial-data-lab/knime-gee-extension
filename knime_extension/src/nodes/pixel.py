@@ -157,6 +157,7 @@ class RasterCalculatorIndices:
     **Sensor / band mapping:**
 
     When using a pre-defined index, select **Sensor** so the correct band names are used:
+
     - **Sentinel-2**: B4 (Red), B8 (NIR), B3 (Green), B2 (Blue), B11/B12 (SWIR)
     - **Landsat 8**: B4 (Red), B5 (NIR), B3 (Green), B2 (Blue), B6/B7 (SWIR)
     - **Landsat 5/7**: B3 (Red), B4 (NIR), B2 (Green), B1 (Blue), B5/B7 (SWIR)
@@ -556,6 +557,7 @@ class ImageBandAggregator:
 
     Uses Earth Engine's ``image.reduce(reducer)``. For each pixel, the reducer
     is applied across all band values; the result is a one-band image. Useful for:
+
     - **Max**: e.g. NAIP 4-band max for Geary's C or other single-band inputs
     - **Mean**: average across bands (e.g. pan- band)
     - **Min / Median / Sum**: other per-pixel band aggregates
@@ -657,6 +659,7 @@ class BandwiseNormalization:
 
     Uses ``image.reduceRegion(ee.Reducer.minMax()/mean/stdDev/percentile)`` to compute
     per-band statistics over the image, then applies a transform to each band. Useful for:
+
     - **Max**: band / max (0–1, e.g. for preprocessing)
     - **Min-max**: (band - min) / (max - min) → 0–1
     - **Z-score**: (band - mean) / stdDev
@@ -664,6 +667,7 @@ class BandwiseNormalization:
     - **Clip**: band.clamp(low, high) — per-band or global bounds
 
     **Parameters:**
+
     - **Scale / maxPixels**: For reduceRegion (statistics over image).
     """
 
@@ -1083,6 +1087,7 @@ class TasseledCapTransformation:
     The Tasseled Cap transformation is a linear transformation that rotates the
     original spectral space to maximize separation between different growth stages
     of crops. The output components are:
+
     - Brightness: Soil line component
     - Greenness: Vegetation component
     - Wetness: Moisture component
@@ -1110,6 +1115,7 @@ class TasseledCapTransformation:
     - Agricultural monitoring
 
     **Note:**
+
     - A custom coefficients array must be provided via the GEE Array Connection input port.
     - You must specify the input bands parameter to match the columns of the coefficient matrix.
     - The coefficient matrix should be a 2D array where rows = TC components, columns = input bands.
@@ -1274,6 +1280,7 @@ class PrincipalComponentAnalysis:
     - Change detection
 
     **Note:**
+
     - PCA components are ordered by variance (pca1 has highest variance).
     - Most information is typically in the first few components.
     - Use image clipping nodes before this node to limit the analysis area.
@@ -1480,6 +1487,7 @@ class SpectralUnmixing:
     and is commonly used for fractional cover or sub-pixel analysis.
 
     Spectral unmixing solves the equation: p = S * f, where:
+
     - p is the pixel spectrum (B bands)
     - S is the endmember matrix (B x P, where P is number of endmembers)
     - f is the endmember fraction vector (P x 1)
@@ -1744,6 +1752,7 @@ class HSVColorTransform:
     and is commonly used for pan-sharpening or color manipulation.
 
     HSV (Hue, Saturation, Value) color space is useful for:
+
     - Pan-sharpening: Replace Value band with panchromatic band
     - Color manipulation
     - Image enhancement
@@ -1751,12 +1760,14 @@ class HSVColorTransform:
     **Transform Directions:**
 
     **RGB to HSV:**
+
     - Converts RGB image to HSV color space
     - **Output bands**: Three bands named `hue`, `saturation`, `value`
     - Requires specifying RGB band names (or uses first 3 bands if empty)
     - Optional panchromatic band for pan-sharpening workflow
 
     **HSV to RGB:**
+
     - Converts HSV image back to RGB color space
     - **Output bands**: Three bands with default names `red`, `green`, `blue` (no need to specify)
     - Input must contain bands named `hue`, `saturation`, `value`
@@ -1940,6 +1951,7 @@ class TableToArray:
     **Example:**
 
     For Tasseled Cap Landsat 5 coefficients:
+
     - Table with 6 rows (components) and 6 columns (bands)
     - Each row represents one TC component (brightness, greenness, etc.)
     - Each column represents one Landsat band (B1, B2, B3, B4, B5, B7)

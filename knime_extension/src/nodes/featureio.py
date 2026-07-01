@@ -5,6 +5,10 @@ Feature collection I/O and processing: read, filter, clip, export.
 
 import knime.extension as knext
 import util.knime_utils as knut
+from util.function_apply import (
+    DEFAULT_FC_FUNCTION_SCRIPT,
+    run_feature_collection_script,
+)
 from util.common import (
     GoogleEarthEngineConnectionObject,
     google_earth_engine_port_type,
@@ -611,6 +615,7 @@ class FeatureCollectionJoin:
     This node performs a spatial join between a primary and secondary Feature Collection using Spatial filter, Distance, and Join type parameters, and is commonly used to attach nearby features or count relationships.
 
     **Parameters:**
+
     - **Spatial filter:**
       - **withinDistance**: match secondary features within Distance of primary geometry.
       - **intersects**: match secondary features that intersect primary geometry.
@@ -622,17 +627,21 @@ class FeatureCollectionJoin:
     - **Max error (meters):** spatial tolerance; larger values can speed up geometry operations.
 
     **Common Use Cases:**
+
     - Count points in polygons (e.g., schools per district).
     - Find polygons within a buffer of roads or rivers.
     - Attach nearby facilities to administrative units.
 
     **Performance Notes:**
+
     - Use **intersects** when boundaries overlap; use **withinDistance** only when proximity is required.
     - Smaller Distance and larger Max error generally improve performance.
     - Simplify or dissolve inputs upstream to reduce geometry complexity.
 
     **Usage Notes:**
+
     - For counts with saveAll, use **Feature Collection Calculator** with `size(matches)` to create a count property.
+    - Before **Feature Collection to Table**, use **Feature Collection Column Filter** to exclude `matches` (nested lists are not supported in KNIME tables).
     - The output stays as a Feature Collection; convert to table only if the collection is small.
 
     """
@@ -720,6 +729,116 @@ class FeatureCollectionJoin:
         return knut.export_gee_feature_collection_connection(
             result, primary_fc_connection
         )
+
+
+def _parse_comma_separated_properties(value):
+    """Parse a comma-separated property name list; strips whitespace and drops empties."""
+    return [p.strip() for p in (value or "").split(",") if p.strip()]
+
+
+############################################
+# Feature Collection Column Filter
+############################################
+
+
+@knext.node(
+    name="GEE Feature Collection Column Filter",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "valueFilter.png",
+    id="fccolumnfilter",
+    after="fcjoin",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection whose properties will be included or excluded.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Feature Collection with only the selected properties retained.",
+    port_type=gee_feature_collection_port_type,
+)
+class FeatureCollectionColumnFilter:
+    """Include or exclude feature properties (columns) on a Feature Collection.
+
+    This node is the property-column counterpart to KNIME's Column Filter: it keeps or
+    drops attributes on each feature while preserving geometry. It is commonly used after
+    **Feature Collection Join** (saveAll) to remove the nested ``matches`` list before
+    **Feature Collection to Table**, or to limit exported attributes to a small set.
+
+    **Modes:**
+
+    - **Include**: Keep only the listed properties (comma-separated).
+    - **Exclude**: Drop the listed properties; all other properties are kept.
+
+    **Examples:**
+
+    - Exclude ``matches`` after a saveAll join so FC to Table succeeds.
+    - Include ``ID, match_count`` for a minimal export table.
+
+    **Note:** This node does not flatten nested lists (e.g. saveAll matches). Use
+    **Feature Collection Calculator** or **Function Apply** first if you need scalar
+    columns from nested data.
+    """
+
+    filter_mode = knext.StringParameter(
+        "Mode",
+        "Include: keep only the listed properties. Exclude: remove the listed properties.",
+        default_value="Exclude",
+        enum=["Include", "Exclude"],
+    )
+
+    properties = knext.StringParameter(
+        "Properties",
+        "Comma-separated property names (e.g. 'matches' or 'ID, NewID, match_count').",
+        default_value="matches",
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, fc_connection):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+
+        prop_names = _parse_comma_separated_properties(self.properties)
+        if not prop_names:
+            raise ValueError(
+                "At least one property name is required. "
+                "Enter comma-separated names (e.g. 'matches' or 'ID, match_count')."
+            )
+
+        fc = fc_connection.feature_collection
+        mode = self.filter_mode
+
+        if mode == "Include":
+            LOGGER.warning(
+                "Column filter (Include): keeping properties %s",
+                prop_names,
+            )
+
+            def keep_selected(feature):
+                return ee.Feature(feature).select(prop_names)
+
+            result_fc = fc.map(keep_selected)
+        else:
+            exclude_ee = ee.List(prop_names)
+            LOGGER.warning(
+                "Column filter (Exclude): removing properties %s",
+                prop_names,
+            )
+
+            def drop_selected(feature):
+                f = ee.Feature(feature)
+                keep = f.propertyNames().removeAll(exclude_ee)
+                return f.select(keep)
+
+            result_fc = fc.map(drop_selected)
+
+        return knut.export_gee_feature_collection_connection(result_fc, fc_connection)
 
 
 ############################################
@@ -884,7 +1003,7 @@ def _codegen_fc_calc(ast):
     category=__category,
     icon_path=__NODE_ICON_PATH + "FCCalculator.png",
     id="fccalculator",
-    after="fcjoin",
+    after="fccolumnfilter",
 )
 @knext.input_port(
     name="GEE Feature Collection Connection",
@@ -900,10 +1019,10 @@ class FeatureCollectionCalculator:
     __doc__ = (
         "Add a computed property to each feature using an expression similar to Band Calculator for features.\n\n"
         "This node computes a new property using Expression and Output property name parameters and is commonly used for densities, ratios, or derived attributes.\n\n"
-        "**Parameters:**\n"
+        "**Parameters:**\n\n"
         "- **Expression:** Formula using feature properties and helpers.\n"
         "- **Output property name:** Name of the new attribute.\n\n"
-        "**Usage notes:**\n"
+        "**Usage notes:**\n\n"
         "- Use Feature Collection Geometry Calculator to add area/length before computing densities.\n\n"
         + knut.FC_CALC_EXPRESSION_SYMBOLS_AND_EXAMPLES
     )
@@ -1022,10 +1141,12 @@ class FeatureCollectionGeometryCalculator:
     This node adds geometry attributes using Attributes to add and Unit parameters and is commonly used to compute area, length, or centroid coordinates for further analysis.
 
     **Parameters:**
+
     - **Attributes to add:** Area, length, perimeter, latitude, longitude.
     - **Unit:** Unit for area, length, and perimeter.
 
     **Usage notes:**
+
     - Latitude and longitude are derived from centroid coordinates.
     - **Attributes** (multi-select): Area, Length, Perimeter use the chosen **Unit** (meter, kilometer, mile).
     - **Latitude** and **Longitude** are always in degrees (WGS84), from the feature geometry centroid.
@@ -1151,12 +1272,14 @@ class FeatureCollectionToImage:
     This node rasterizes features using Output mode, Property name, and Scale parameters and is commonly used to create masks or ID rasters from polygons.
 
     **Parameters:**
+
     - **Output:** binary mask or property image.
     - **Property name:** Numeric property to burn when using property mode.
     - **Scale:** Output pixel size in meters.
     - **Expand zeros to buffer area / Mask mode / Buffer distance:** Optional extent and mask controls.
 
     **Usage notes:**
+
     - Binary mode outputs band **mask**; property mode uses the property name.
     - **Binary mask:** Output 1 where a polygon intersects the pixel, 0 elsewhere (e.g. protected area mask).
     - **Property image:** Output the value of the given property for the polygon that covers the pixel (e.g. unique ID).
@@ -1297,10 +1420,12 @@ class BufferFeatures:
     This node buffers features using Buffer radius and Output square bounds parameters and is commonly used to create sample plots or distance-based zones.
 
     **Parameters:**
+
     - **Buffer radius:** Distance in meters.
     - **Output square bounds:** Use square bounds instead of circular buffers.
 
     **Usage notes:**
+
     - Works for points, lines, and polygons.
 
     Works for points (e.g. plot centers), polygons (e.g. expand protected area), or lines.
@@ -1380,19 +1505,23 @@ class DistanceToFeatureCollection:
     This node builds a distance-to-boundary raster using Scale and Max distance parameters and is commonly used for proximity analysis, buffer modeling, and distance-based weighting.
 
     **Parameters:**
+
     - **Scale (meters):** Output pixel size for the distance image.
     - **Max distance (meters):** Maximum distance from the boundary to include; pixels farther away are masked.
 
     **Common Use Cases:**
+
     - Distance to protected area boundary for risk or accessibility modeling.
     - Distance to rivers/roads (after converting them to a Feature Collection).
     - Create distance decay inputs for suitability or cost surfaces.
 
     **Performance Notes:**
+
     - Smaller Scale and larger Max distance increase computation.
     - Clip or simplify the input Feature Collection to reduce geometry complexity.
 
     **Usage Notes:**
+
     - Output band name is **distance** in meters.
     - Output is masked beyond Max distance and reprojected to EPSG:4326 at the chosen Scale.
     - Combine with **Feature Collection to Image** mask in Band Merger so Band Calculator can use `distance` and `mask` together.
@@ -1571,10 +1700,14 @@ class FeatureCollectionToTable:
     This node converts a Feature Collection to a local table using Output format and is commonly used for small collections or previewing results.
 
     **Parameters:**
+
     - **Output format:** DataFrame or GeoDataFrame.
 
     **Usage notes:**
+
     - Interactive API has a payload limit; use Feature Collection Exporter for large data.
+    - Nested property types (e.g. the ``matches`` list from saveAll join) are not supported;
+      use **Feature Collection Column Filter** to exclude them before conversion.
     This node converts a Google Earth Engine FeatureCollection to a KNIME table,
     allowing you to work with GEE vector data in standard tabular format.
     This node bridges GEE vector operations with KNIME's data processing capabilities,
@@ -1587,11 +1720,13 @@ class FeatureCollectionToTable:
     It uses GEE's interactive API which has a **10MB payload limit**.
 
     **Recommended Use Cases:**
+
     - Small collections (< 1000 features with simple attributes)
     - Quick data previews and exploration
     - Testing and debugging workflows
 
     **For Large Datasets:**
+
     - Use **"Feature Collection Exporter"** node for large collections
     - Export uses GEE's batch processing system (no payload limits)
     - Suitable for production workflows with millions of features
@@ -1709,10 +1844,12 @@ class GeoTableToFeatureCollection:
     This node uploads a GeoTable using Geometry column and Batch size parameters and is commonly used to bring local study areas or training samples into GEE.
 
     **Parameters:**
+
     - **Geometry column:** Column containing geometry.
     - **Batch size:** Features per batch for large uploads.
 
     **Usage notes:**
+
     - Large tables are batched automatically to avoid upload limits.
     This node converts a KNIME table containing geometry data to a Google Earth Engine FeatureCollection,
     enabling vector data processing in GEE workflows. This node bridges local GIS data with GEE's processing capabilities,
@@ -1882,12 +2019,14 @@ class FeatureCollectionExporter:
     This node exports a Feature Collection using Destination mode, Export format, Destination path, and Wait for completion parameters and is commonly used to download large vector results.
 
     **Parameters:**
+
     - **Destination mode:** Drive or Cloud Storage.
     - **Export format:** CSV, GeoJSON, KML, KMZ, or SHP.
     - **Destination path:** Drive folder or Cloud Storage path.
     - **Wait for completion / Max wait seconds:** Optional blocking export.
 
     **Usage notes:**
+
     - Service accounts require Cloud Storage; Drive needs interactive auth with Drive scope.
     **Authentication & Scopes**
 
@@ -2139,9 +2278,11 @@ class CloudStorageToTable:
     This node reads a Cloud Storage file using Cloud Storage path and is commonly used to bring exported CSV or vector files back into KNIME.
 
     **Parameters:**
+
     - **Cloud Storage path:** Path to the file in a bucket.
 
     **Usage notes:**
+
     - File extension determines parser; supported: CSV, GeoJSON, KML/KMZ, SHP.
     Provide the file as a single Cloud Storage path such as ``bucket/path/file.ext`` or
     ``gs://bucket/path/file.ext``. The bucket must already exist and the filename must include
@@ -2314,3 +2455,66 @@ class CloudStorageToTable:
         except Exception as e:
             LOGGER.error(f"Cloud Storage to Table conversion failed: {e}")
             raise
+
+
+############################################
+# Feature Collection Function Apply
+############################################
+
+
+@knext.node(
+    name="GEE Feature Collection Function Apply",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "FCapply.png",
+    id="fcfunctionapply",
+    after="fcgeometrycalculator",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Input ee.FeatureCollection to transform.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Output ee.FeatureCollection from the user script.",
+    port_type=gee_feature_collection_port_type,
+)
+class FeatureCollectionFunctionApply:
+    """Applies a user Python script to build a new ``ee.FeatureCollection`` computation graph.
+
+    The script runs **once on the KNIME client** when the node executes. It composes
+    Earth Engine operators (``filter``, ``map``, ``merge``, etc.) into a deferred graph;
+    Python is not executed per feature on Earth Engine servers.
+
+    **Script contract**
+
+    - ``feature_collection`` / ``fc``: the input ``ee.FeatureCollection`` (injected).
+    - ``ee``: the Earth Engine Python module (injected).
+    - Define ``def apply(feature_collection): ...`` and
+      ``result = apply(feature_collection)``, or assign ``result`` directly.
+
+    **Example:** combine property and spatial filters with ``ee.Filter.And`` and
+    ``fc.filter(...)`` (see the default script).
+    """
+
+    script = knext.MultilineStringParameter(
+        "Python script",
+        "Must set ``result`` to an ee.FeatureCollection, or define "
+        "apply(feature_collection) and ``result = apply(feature_collection)``. "
+        "Injected names: ``feature_collection``, ``fc``, ``ee``.",
+        default_value=DEFAULT_FC_FUNCTION_SCRIPT,
+        number_of_lines=20,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, fc_connection):
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+        fc = fc_connection.feature_collection
+        result = run_feature_collection_script(self.script or "", fc)
+        LOGGER.warning("Feature Collection Function Apply executed")
+        return knut.export_gee_feature_collection_connection(result, fc_connection)

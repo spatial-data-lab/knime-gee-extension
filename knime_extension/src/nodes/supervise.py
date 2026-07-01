@@ -43,6 +43,7 @@ def remap_class_values_to_continuous(training_fc, label_property):
     continuous integers (0, 1, 2, 3, ...).
 
     Returns:
+
         - remapped_fc: FeatureCollection with remapped class values
         - class_mapping: dict mapping original values to new values {original: new}
         - reverse_mapping: dict mapping new values to original {new: original}
@@ -90,13 +91,11 @@ def remap_class_values_to_continuous(training_fc, label_property):
     # Use remap() method if available, otherwise use map()
     def remap_class(feature):
         original_value = feature.get(label_property)
-        # Use ee.Number to ensure proper comparison
         remapped_value = ee.Number(original_value)
-        # Build chain of conditions for each class
         for idx, orig_val in enumerate(unique_classes):
             remapped_value = ee.Algorithms.If(
                 ee.Number(original_value).eq(ee.Number(orig_val)),
-                ee.Number(idx),
+                ee.Number(idx).toInt(),
                 remapped_value,
             )
         return feature.set(label_property, remapped_value)
@@ -246,11 +245,12 @@ def compute_classification_metrics(
 def compute_validation_metrics_from_classified_fc(
     classified_fc, label_property, prediction_property=_ClassResult
 ):
-    """Compute classification metrics from already classified FeatureCollection using GEE's errorMatrix.
+    """Compute classification metrics directly from the Predictor's output.
 
-    This function uses GEE's ConfusionMatrix methods to compute metrics server-side,
-    minimizing data transfer between cloud and local. All accuracy metrics are computed
-    on the GEE server, and only the final results are transferred.
+    Downloads the (true label, predicted label) pairs ONCE and builds the confusion
+    matrix locally with pandas. This guarantees the metrics match exactly what
+    'GEE Feature Collection to Table' + a standard scorer would show, since both read
+    the same materialized predictions — no separate server-side re-computation.
 
     Args:
         classified_fc: ee.FeatureCollection that has been classified (contains both
@@ -268,89 +268,73 @@ def compute_validation_metrics_from_classified_fc(
 
     LOGGER = logging.getLogger(__name__)
 
-    # Compute error matrix (GEE built-in, server-side)
-    error_matrix = classified_fc.errorMatrix(label_property, prediction_property)
-
-    # Use GEE's built-in methods to compute metrics server-side
-    # This minimizes data transfer - only final metrics are downloaded
-    # Build a server-side structure with all metrics
-    metrics_dict = ee.Dictionary(
-        {
-            "order": error_matrix.order(),
-            "confusion_array": error_matrix.array(),
-            "accuracy": error_matrix.accuracy(),
-            "kappa": error_matrix.kappa(),
-            "producers_accuracy": error_matrix.producersAccuracy(),
-            "consumers_accuracy": error_matrix.consumersAccuracy(),
-        }
+    # Download both columns in a single request (only the two needed properties)
+    pairs = (
+        classified_fc.select([label_property, prediction_property])
+        .reduceColumns(
+            ee.Reducer.toList(2),
+            [label_property, prediction_property],
+        )
+        .get("list")
+        .getInfo()
     )
 
-    # Single getInfo() call to get all metrics at once
-    metrics_info = metrics_dict.getInfo()
+    if not pairs:
+        raise ValueError(
+            "No (label, prediction) pairs found. Ensure the FeatureCollection comes "
+            "from 'Feature Collection Predictor' and contains both columns."
+        )
 
-    # Extract metrics
-    confusion_matrix = metrics_info["confusion_array"]
-    order_raw = metrics_info["order"]
-    overall_accuracy = metrics_info["accuracy"]
-    kappa = metrics_info["kappa"]
-    producers_accuracy_raw = metrics_info["producers_accuracy"]  # Recall (per class)
-    consumers_accuracy_raw = metrics_info["consumers_accuracy"]  # Precision (per class)
+    def _to_int(v):
+        return int(round(v)) if isinstance(v, float) else int(v)
 
-    # Process producers/consumers accuracy - handle nested arrays (2D -> 1D)
-    # GEE may return nested arrays where each row has one element
-    if producers_accuracy_raw and isinstance(producers_accuracy_raw[0], list):
-        producers_accuracy = [row[0] if row else 0.0 for row in producers_accuracy_raw]
-    else:
-        producers_accuracy = producers_accuracy_raw if producers_accuracy_raw else []
+    y_true = [_to_int(a) for a, _ in pairs]
+    y_pred = [_to_int(p) for _, p in pairs]
+    total = len(y_true)
 
-    if consumers_accuracy_raw and isinstance(consumers_accuracy_raw[0], list):
-        consumers_accuracy = [row[0] if row else 0.0 for row in consumers_accuracy_raw]
-    else:
-        consumers_accuracy = consumers_accuracy_raw if consumers_accuracy_raw else []
+    # Class order = sorted union of true and predicted values
+    order = sorted(set(y_true) | set(y_pred))
+    num_classes = len(order)
+    idx = {c: i for i, c in enumerate(order)}
 
-    # Process order
-    num_classes = len(confusion_matrix)
-    if isinstance(order_raw, list):
-        unique_order = []
-        seen = set()
-        for val in order_raw:
-            if val not in seen:
-                unique_order.append(val)
-                seen.add(val)
-                if len(unique_order) >= num_classes:
-                    break
-        while len(unique_order) < num_classes:
-            unique_order.append(f"Class_{len(unique_order)}")
-        order = unique_order[:num_classes]
-    else:
-        order = [f"Class_{i}" for i in range(num_classes)]
+    # Build confusion matrix locally: rows = actual, cols = predicted
+    cm = [[0] * num_classes for _ in range(num_classes)]
+    for a, p in zip(y_true, y_pred):
+        cm[idx[a]][idx[p]] += 1
 
-    LOGGER.warning(f"Computing validation metrics for {num_classes} classes: {order}")
+    LOGGER.warning(
+        f"Computing validation metrics for {num_classes} classes from {total} samples: {order}"
+    )
 
-    # Calculate per-class metrics
-    # Producers Accuracy = Recall = TP / (TP + FN) = TP / row_sum
-    # Consumers Accuracy = Precision = TP / (TP + FP) = TP / col_sum
-    metrics_list = []
+    overall_tp = sum(cm[i][i] for i in range(num_classes))
+    overall_accuracy = overall_tp / total if total > 0 else 0.0
 
-    # Get TP values from confusion matrix diagonal
+    # Cohen's Kappa
+    pe = 0.0
     for i in range(num_classes):
-        class_name = order[i] if i < len(order) else f"Class_{i}"
-        tp = confusion_matrix[i][i]  # True positives (diagonal)
+        row_sum = sum(cm[i])
+        col_sum = sum(cm[j][i] for j in range(num_classes))
+        pe += (row_sum * col_sum) / (total * total) if total > 0 else 0.0
+    kappa = (overall_accuracy - pe) / (1 - pe) if (1 - pe) > 0 else 0.0
 
-        # Get Recall (Producers Accuracy) and Precision (Consumers Accuracy) from GEE
-        recall = float(producers_accuracy[i]) if i < len(producers_accuracy) else 0.0
-        precision = float(consumers_accuracy[i]) if i < len(consumers_accuracy) else 0.0
+    # Per-class metrics
+    metrics_list = []
+    for i, class_value in enumerate(order):
+        tp = cm[i][i]
+        row_sum = sum(cm[i])  # actual count of this class
+        col_sum = sum(cm[j][i] for j in range(num_classes))  # predicted as this class
 
-        # Calculate F-measure
+        recall = tp / row_sum if row_sum > 0 else 0.0  # Producer's accuracy
+        precision = tp / col_sum if col_sum > 0 else 0.0  # Consumer's accuracy
         f_measure = (
-            2 * (precision * recall) / (precision + recall)
+            2 * precision * recall / (precision + recall)
             if (precision + recall) > 0
             else 0.0
         )
 
         metrics_list.append(
             {
-                "Class": str(class_name),
+                "Class": str(class_value),
                 "TP": int(tp),
                 "Precision": round(precision, 4),
                 "Recall": round(recall, 4),
@@ -358,10 +342,7 @@ def compute_validation_metrics_from_classified_fc(
             }
         )
 
-    # Calculate overall TP for display
-    overall_tp = sum(confusion_matrix[i][i] for i in range(num_classes))
-
-    # Add Overall row
+    # Overall row
     metrics_list.append(
         {
             "Class": "Overall",
@@ -374,12 +355,12 @@ def compute_validation_metrics_from_classified_fc(
         }
     )
 
-    # Create DataFrame
     df = pd.DataFrame(metrics_list)
     df.set_index("Class", inplace=True)
 
     LOGGER.warning(
-        f"Created validation metrics table with {len(metrics_list)} rows ({num_classes} classes + 1 Overall)"
+        f"Created validation metrics table with {len(metrics_list)} rows "
+        f"({num_classes} classes + 1 Overall)"
     )
 
     return df
@@ -659,9 +640,10 @@ class SampleRegionsForClassification:
        - Input ports: FeatureCollection with labeled polygons (first port) + Image with spectral bands (second port)
        - Use when: You have manually drawn training polygons
 
-    - **Point Mode**: Uses pre-generated points (random/stratified/field samples) with class labels
-       - Input ports: FeatureCollection of labeled point samples (first port) + Image with spectral bands (second port)
-       - Use when: You already have sample points with known class labels
+    - **Point Mode**: Uses pre-generated point locations (random, stratified, or field samples)
+       - Input ports: FeatureCollection of points (first port) + Image with spectral bands (second port)
+       - Use when: Points already exist (with or without class labels)
+       - Unlabeled points (e.g. ``FeatureCollection.randomPoints``) are supported; leave **Label property** empty
 
     **Input Requirements:**
 
@@ -710,9 +692,9 @@ class SampleRegionsForClassification:
         Input ports: FeatureCollection with labeled polygons (first port) + Image with spectral bands (second port). 
         Use when: You have manually drawn training polygons
 
-        - **Point Mode**: Uses pre-generated points (random/stratified/field samples) with class labels. 
-        Input ports: FeatureCollection of labeled point samples (first port) + Image with spectral bands (second port). 
-        Use when: You already have sample points with known class labels
+        - **Point Mode**: Uses pre-generated point locations (random/stratified/field samples). 
+        Input ports: FeatureCollection of points (first port) + Image with spectral bands (second port). 
+        Use when: Points already exist. Leave Label property empty for geometry-only points (e.g. from **GEE Feature Collection Random Points**).
         """,
         default_value="Polygon",
         enum=["Polygon", "Point"],
@@ -720,8 +702,10 @@ class SampleRegionsForClassification:
 
     label_property = knext.StringParameter(
         "Label property",
-        "Property name containing class labels in the training Feature Collection (e.g., 'class', 'LC', 'landcover').",
-        default_value="class",
+        "Class label property on training features (e.g. 'class', 'presence'). "
+        "Leave empty for geometry-only points (e.g. FeatureCollection.randomPoints). "
+        "Polygon mode defaults to 'class' when empty.",
+        default_value="",
     )
 
     bands = knext.StringParameter(
@@ -785,12 +769,13 @@ class SampleRegionsForClassification:
             # Sample based on mode
             if self.sampling_mode == "Polygon":
                 # Polygon mode: sample all pixels within polygons
+                label_prop = (self.label_property or "class").strip()
                 LOGGER.warning(
-                    f"Polygon mode: Sampling image (scale={scale_value}m) with label property: {self.label_property}"
+                    f"Polygon mode: Sampling image (scale={scale_value}m) with label property: {label_prop}"
                 )
                 sampled = image.sampleRegions(
                     collection=training_fc,
-                    properties=[self.label_property],
+                    properties=[label_prop],
                     scale=scale_value,
                     tileScale=self.tile_scale,
                     geometries=True,  # Preserve geometry for GeoDataFrame conversion
@@ -822,7 +807,7 @@ class SampleRegionsForClassification:
                 if sample_feature_info is None:
                     raise ValueError(
                         "Training points FeatureCollection is empty. "
-                        "Provide at least one feature with a class label."
+                        "Provide at least one point feature."
                     )
 
                 available_props = list(sample_feature_info.get("properties", {}).keys())
@@ -836,6 +821,12 @@ class SampleRegionsForClassification:
                     LOGGER.warning(
                         f"Using user-specified label property '{label_prop}'"
                     )
+                elif preferred_label:
+                    raise ValueError(
+                        f"Label property '{preferred_label}' not found on training points. "
+                        f"Available properties: {available_props or '(none)'}. "
+                        "Leave Label property empty for geometry-only points."
+                    )
                 else:
                     for prop in available_props:
                         if prop not in system_props and prop not in band_names:
@@ -845,20 +836,21 @@ class SampleRegionsForClassification:
                             )
                             break
 
-                if label_prop is None:
-                    raise ValueError(
-                        "Could not determine the label property in training points. "
-                        "Please ensure the FeatureCollection has a class label column and/or set the 'Label Property' parameter."
+                sample_kwargs = {
+                    "collection": sample_points,
+                    "scale": scale_value,
+                    "tileScale": self.tile_scale,
+                    "geometries": True,
+                }
+                if label_prop:
+                    sample_kwargs["properties"] = [label_prop]
+                else:
+                    LOGGER.warning(
+                        "No label property on points; sampling band values only "
+                        "(e.g. random points + sampleRegions without labels)"
                     )
 
-                # Extract values from the image at the supplied point locations
-                sampled = image.sampleRegions(
-                    collection=sample_points,
-                    properties=[label_prop],
-                    scale=scale_value,
-                    tileScale=self.tile_scale,
-                    geometries=True,  # Preserve geometry for GeoDataFrame conversion
-                )
+                sampled = image.sampleRegions(**sample_kwargs)
 
                 try:
                     sample_count = sampled.size().getInfo()
@@ -909,6 +901,7 @@ class TrainingDataPartitioner:
     """Splits training data into training and validation sets.
 
     This node randomly partitions a FeatureCollection into two subsets:
+
     - **Training Set**: Used for training the classifier
     - **Validation Set**: Used for evaluating model performance (unseen data)
 
@@ -1154,6 +1147,16 @@ class RandomForestLearner:
         is_advanced=True,
     )
 
+    seed = knext.IntParameter(
+        "Random seed",
+        "Random seed for the forest. A fixed seed makes predictions reproducible across "
+        "re-evaluations (so views, FC-to-Table and the Scorer all agree).",
+        default_value=0,
+        min_value=0,
+        max_value=2147483647,
+        is_advanced=True,
+    )
+
     def configure(self, configure_context, input_schema):
         return None
 
@@ -1236,6 +1239,7 @@ class RandomForestLearner:
                 "numberOfTrees": self.number_of_trees,
                 "minLeafPopulation": self.min_leaf_population,
                 "bagFraction": self.bag_fraction,
+                "seed": self.seed,  # Fixed seed -> reproducible predictions
             }
 
             # Set variables per split (auto if 0)
@@ -2070,6 +2074,7 @@ class ImageClassPredictor:
     **Output:**
 
     The node outputs an image with one band:
+
     - **GEE_class**: Class IDs (integer values, remapped to original class values if applicable)
 
     **Common Use Cases:**
@@ -2300,12 +2305,11 @@ class FeatureCollectionPredictor:
                 def remap_prediction(feature):
                     """Remap prediction from 0-based index to original class value"""
                     predicted_value = feature.get(_ClassResult)
-                    # Use ee.Algorithms.If chain for server-side mapping
-                    remapped_value = predicted_value  # Default to original value
+                    remapped_value = ee.Number(predicted_value).toInt()
                     for idx, orig_val in zip(remap_from, remap_to):
                         remapped_value = ee.Algorithms.If(
                             ee.Number(predicted_value).eq(ee.Number(idx)),
-                            ee.Number(orig_val),
+                            ee.Number(orig_val).toInt(),
                             remapped_value,
                         )
                     return feature.set(_ClassResult, remapped_value)
@@ -2319,15 +2323,30 @@ class FeatureCollectionPredictor:
                 f"Successfully classified Feature Collection with {_ClassResult} property"
             )
 
-            # Log sample count if available
+            # Materialize predictions once so every downstream node (FC-to-Table, the
+            # Scorer, views) reads IDENTICAL data. GEE's upstream sampling/partitioning
+            # is lazy and not guaranteed reproducible across separate evaluations, so
+            # without this each consumer would re-evaluate and could see a different
+            # split / predictions. Rebuilding from a single getInfo() freezes the result.
             try:
-                fc_size = feature_collection.size().getInfo()
-                LOGGER.warning(f"Classified {fc_size} features")
-            except Exception:
-                LOGGER.warning("Classified Feature Collection (size check skipped)")
+                materialized = classified_fc.getInfo()  # GeoJSON FeatureCollection
+                classified_fc = ee.FeatureCollection(materialized)
+                fc_size = len(materialized.get("features", []))
+                LOGGER.warning(
+                    f"Materialized {fc_size} classified features (predictions frozen)"
+                )
+            except Exception as e:
+                LOGGER.warning(
+                    f"Could not materialize predictions ({e}); keeping lazy collection. "
+                    "Downstream nodes may see differing results if upstream sampling is "
+                    "non-deterministic."
+                )
 
+            # Carry the target column name forward so the Classifier Scorer can read it
             return knut.export_gee_feature_collection_connection(
-                classified_fc, fc_connection
+                classified_fc,
+                fc_connection,
+                label_property=classifier_connection.label_property,
             )
 
         except Exception as e:
@@ -2391,12 +2410,6 @@ class ClassifierScorer:
     4. Score: Classified Validation Set → `Classifier Scorer` (this node)
     """
 
-    label_property = knext.StringParameter(
-        "Label property",
-        "Name of the property containing true class labels (e.g., 'class', 'landcover', 'LC'). This should match the label property used during training.",
-        default_value="class",
-    )
-
     def configure(self, configure_context, input_schema):
         return None
 
@@ -2421,42 +2434,74 @@ class ClassifierScorer:
                     "Please connect the output from 'Feature Collection Predictor' node."
                 )
 
-            # Verify that the FeatureCollection contains the required properties
+            # Prediction column is always the fixed output of Feature Collection Predictor
+            prediction_column = _ClassResult
+
+            # Inspect actual properties on the FeatureCollection
+            properties = None
             try:
                 first_feature = classified_fc.first()
                 properties = first_feature.propertyNames().getInfo()
-                if _ClassResult not in properties:
-                    raise ValueError(
-                        f"FeatureCollection does not contain prediction property '{_ClassResult}'. "
-                        f"Please ensure the FeatureCollection has been classified by 'Feature Collection Predictor' node. "
-                        f"Found properties: {properties}"
-                    )
-                if self.label_property not in properties:
-                    raise ValueError(
-                        f"FeatureCollection does not contain label property '{self.label_property}'. "
-                        f"Please check the label property name. "
-                        f"Found properties: {properties}"
-                    )
             except Exception as e:
-                LOGGER.warning(f"Could not verify properties: {e}")
+                LOGGER.warning(f"Could not inspect properties: {e}")
+
+            # Resolve target column fully automatically:
+            #   1) use the column carried over from the Learner via the connection
+            #   2) otherwise auto-detect the first non-system, non-prediction property
+            target_column = getattr(fc_connection, "label_property", None)
+            if target_column:
+                LOGGER.warning(
+                    f"Using target column carried over from Learner: '{target_column}'"
+                )
+            elif properties:
+                _SYSTEM_PROPS = {"system:index", "system:time_start", "random"}
+                candidates = [
+                    p
+                    for p in properties
+                    if p not in _SYSTEM_PROPS and p != prediction_column
+                ]
+                if candidates:
+                    target_column = candidates[0]
+                    LOGGER.warning(f"Auto-detected target column: '{target_column}'")
+
+            if not target_column:
+                raise knext.InvalidParametersError(
+                    "Could not determine the target column automatically. "
+                    "Please ensure the input comes from 'Feature Collection Predictor' "
+                    "with a labeled training/validation set."
+                )
+
+            # Verify both comparison columns exist
+            if properties:
+                for col, label in (
+                    (prediction_column, "Prediction column"),
+                    (target_column, "Target column"),
+                ):
+                    if col not in properties:
+                        raise knext.InvalidParametersError(
+                            f"{label} '{col}' not found in FeatureCollection. "
+                            f"Available properties: {properties}."
+                        )
 
             # Get data size for logging
             try:
                 fc_size = classified_fc.size().getInfo()
                 LOGGER.warning(
-                    f"Computing validation accuracy metrics for {fc_size} classified features (label property: {self.label_property})"
+                    f"Computing validation accuracy metrics for {fc_size} classified features "
+                    f"(target: '{target_column}', prediction: '{prediction_column}')"
                 )
             except Exception:
                 LOGGER.warning(
-                    f"Computing validation accuracy metrics (label property: {self.label_property})"
+                    f"Computing validation accuracy metrics "
+                    f"(target: '{target_column}', prediction: '{prediction_column}')"
                 )
 
             # Compute validation accuracy metrics using GEE's built-in methods
             try:
                 metrics_df = compute_validation_metrics_from_classified_fc(
                     classified_fc,
-                    self.label_property,
-                    prediction_property=_ClassResult,
+                    target_column,
+                    prediction_property=prediction_column,
                 )
                 LOGGER.warning("Successfully computed validation accuracy metrics")
             except Exception as e:

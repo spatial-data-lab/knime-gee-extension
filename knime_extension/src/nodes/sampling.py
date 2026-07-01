@@ -1150,6 +1150,7 @@ class CountByClass:
     **Output Format:**
 
     Each feature in the output Feature Collection will have additional properties:
+
     - 'class_X': Pixel count for class code X
     - Original feature properties are preserved
     """
@@ -1620,3 +1621,100 @@ class ImageClusterSampling:
         except Exception as e:
             LOGGER.error(f"Image cluster sampling failed: {e}")
             raise
+
+
+############################################
+# Feature Collection Random Points
+############################################
+
+
+@knext.node(
+    name="GEE Feature Collection Random Points",
+    node_type=knext.NodeType.MANIPULATOR,
+    category=__category,
+    icon_path=__NODE_ICON_PATH + "RandomSample.png",
+    id="fcrandompoints",
+    after="imageclustersampling",
+)
+@knext.input_port(
+    name="GEE Feature Collection Connection",
+    description="Region geometry (polygon, line, or points) for random point generation.",
+    port_type=gee_feature_collection_port_type,
+)
+@knext.output_port(
+    name="GEE Feature Collection Connection",
+    description="Random point features (geometries only, no band values).",
+    port_type=gee_feature_collection_port_type,
+)
+class FeatureCollectionRandomPoints:
+    """Generates uniformly random points within a region geometry.
+
+    Wraps ``ee.FeatureCollection.randomPoints``. The input Feature Collection defines
+    the sampling region via ``featureCollection.geometry()`` (e.g. a single polygon
+    from **GEE GeoTable to Feature Collection**). Output points have no image band
+    values — pair with **GEE Reference Feature Collection Sampler** and an image
+    to run ``sampleRegions`` and attach band values at each point.
+
+    **Parameters:**
+
+    - **Number of points**: How many random points to generate (default: 1000)
+    - **Random seed**: Seed for reproducible sampling (default: 1234)
+    - **Max error**: Tolerated reprojection error in meters (advanced)
+
+    **Reference:**
+    https://developers.google.com/earth-engine/apidocs/ee-featurecollection-randompoints
+    """
+
+    num_points = knext.IntParameter(
+        "Number of points",
+        "Number of random points to generate within the region.",
+        default_value=1000,
+        min_value=1,
+        max_value=1000000,
+    )
+
+    seed = knext.IntParameter(
+        "Random seed",
+        "Random seed for reproducible point placement.",
+        default_value=1234,
+        min_value=0,
+        max_value=2147483647,
+    )
+
+    max_error = knext.DoubleParameter(
+        "Max error (m)",
+        "Maximum tolerated reprojection error when generating points.",
+        default_value=1.0,
+        min_value=0.0,
+        max_value=1000.0,
+        is_advanced=True,
+    )
+
+    def configure(self, configure_context, input_schema):
+        return None
+
+    def execute(self, exec_context: knext.ExecutionContext, fc_connection):
+        import ee
+        import logging
+
+        LOGGER = logging.getLogger(__name__)
+        fc = fc_connection.feature_collection
+        if not isinstance(fc, ee.FeatureCollection):
+            raise ValueError("Input must be a FeatureCollection object")
+
+        region = fc.geometry()
+        kwargs = {
+            "region": region,
+            "points": self.num_points,
+            "seed": self.seed,
+        }
+        if self.max_error > 0:
+            kwargs["maxError"] = self.max_error
+
+        points = ee.FeatureCollection.randomPoints(**kwargs)
+        LOGGER.warning(
+            "Random points: count=%s seed=%s",
+            self.num_points,
+            self.seed,
+        )
+        return knut.export_gee_feature_collection_connection(points, fc_connection)

@@ -209,26 +209,35 @@ class GEEFeatureCollectionConnectionObject(BaseGEEConnectionObject):
         spec: GoogleEarthEngineObjectSpec,
         credentials=None,
         feature_collection=None,
+        label_property=None,  # Target/label column name carried from the Learner
     ):
         super().__init__(spec, credentials)
         self._feature_collection = feature_collection
+        self._label_property = label_property
 
     @property
     def feature_collection(self):
         """Get the GEE FeatureCollection object"""
         return self._feature_collection
 
+    @property
+    def label_property(self):
+        """Get the target/label column name propagated from training (may be None)"""
+        return self._label_property
+
     def to_connection_data(self):
         return {
             "credentials": self._credentials,
             "feature_collection": self._feature_collection,
+            "label_property": self._label_property,
         }
 
     @classmethod
     def from_connection_data(cls, spec: knext.PortObjectSpec, data):
         credentials = data.get("credentials") if data else None
         feature_collection = data.get("feature_collection") if data else None
-        return cls(spec, credentials, feature_collection)
+        label_property = data.get("label_property") if data else None
+        return cls(spec, credentials, feature_collection, label_property)
 
 
 # Classifier Connection Object

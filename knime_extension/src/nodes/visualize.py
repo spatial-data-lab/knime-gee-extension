@@ -9,6 +9,7 @@ from util.common import (
     gee_feature_collection_port_type,
     gee_image_collection_port_type,
 )
+from util.palette_presets import PALETTE_PRESETS
 
 __category = knext.category(
     path="/community/gee",
@@ -21,6 +22,14 @@ __category = knext.category(
 
 # Root path for all node icons in this file
 __NODE_ICON_PATH = "icons/icon/visualize/"
+
+_PALETTE_PRESETS = PALETTE_PRESETS
+
+
+def _resolve_palette_string(preset: str, color_palette: str) -> str:
+    if preset and preset != "Custom":
+        return _PALETTE_PRESETS.get(preset, color_palette)
+    return color_palette
 
 # CSS named colors (W3C / CSS Color Module). Full list:
 # https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
@@ -198,24 +207,58 @@ def _normalize_color_to_hex(token):
 
 
 ############################################
-# Helper: center map on EE object with auto zoom (skip for global extent)
+# Folium map helpers (replaces geemap.foliumap)
 ############################################
+
+_BASEMAP_TILES = {
+    "OpenStreetMap": (
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "© <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors",
+    ),
+    "Satellite": (
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "Esri, DigitalGlobe, Earthstar Geographics",
+    ),
+    "Terrain": (
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+        "Esri, HERE, Garmin, FAO, NOAA, USGS",
+    ),
+    "Hybrid": (
+        "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+        "Map data ©2024 Google",
+    ),
+}
+
+
+def _create_folium_map(base_map="OpenStreetMap"):
+    import folium
+    tiles_url, attr = _BASEMAP_TILES.get(base_map, _BASEMAP_TILES["OpenStreetMap"])
+    return folium.Map(location=[0, 0], zoom_start=3, tiles=tiles_url, attr=attr)
+
+
+def _add_ee_layer(Map, ee_image, vis_params, name):
+    import folium
+    map_id_dict = ee_image.getMapId(vis_params)
+    folium.TileLayer(
+        tiles=map_id_dict["tile_fetcher"].url_format,
+        attr="Google Earth Engine",
+        name=name,
+        overlay=True,
+        control=True,
+    ).add_to(Map)
 
 
 def _center_map_on_object(Map, ee_object):
-    """Center map on EE object (image/geometry). Use fit_bounds from geometry.
-    If extent is global (covers whole world), use default centerObject behavior."""
-    import ee
-
+    """Center map on EE object using folium fit_bounds. Falls back to centroid."""
     try:
         geom = ee_object.geometry() if hasattr(ee_object, "geometry") else ee_object
         bounds_info = geom.bounds().getInfo()
         if not bounds_info or "coordinates" not in bounds_info:
-            Map.centerObject(ee_object)
+            _center_map_fallback(Map, ee_object)
             return
         coords = bounds_info.get("coordinates", [[]])[0]
         if not coords:
-            Map.centerObject(ee_object)
+            _center_map_fallback(Map, ee_object)
             return
         lons = [p[0] for p in coords]
         lats = [p[1] for p in coords]
@@ -224,13 +267,22 @@ def _center_map_on_object(Map, ee_object):
         lon_span = abs(max_lon - min_lon)
         lat_span = abs(max_lat - min_lat)
         if lon_span > 350 or lat_span > 170:
-            Map.centerObject(ee_object)
+            _center_map_fallback(Map, ee_object)
             return
-        # folium fit_bounds: [[south, west], [north, east]] = [[min_lat, min_lon], [max_lat, max_lon]]
-        bounds = [[min_lat, min_lon], [max_lat, max_lon]]
-        Map.fit_bounds(bounds)
+        Map.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
     except Exception:
-        Map.centerObject(ee_object)
+        _center_map_fallback(Map, ee_object)
+
+
+def _center_map_fallback(Map, ee_object):
+    """Set map location to object centroid."""
+    try:
+        geom = ee_object.geometry() if hasattr(ee_object, "geometry") else ee_object
+        centroid = geom.centroid(maxError=1000).coordinates().getInfo()
+        Map.location = [centroid[1], centroid[0]]
+        Map.zoom_start = 4
+    except Exception:
+        pass
 
 
 ############################################
@@ -313,9 +365,19 @@ class ViewNodeGEEMap:
         default_value="",
     )
 
+    palette_preset = knext.StringParameter(
+        "Palette preset",
+        "Built-in colormaps: matplotlib/ColorBrewer (Viridis, RdBu, …), "
+        "or library:name (cmocean:balance, crameri:turku, landcover:esa). "
+        "Custom shows the Color palette field for manual hex/CSS input or Flow Variables.",
+        default_value="Custom",
+        enum=list(_PALETTE_PRESETS.keys()),
+    )
+
     color_palette = knext.StringParameter(
         "Color palette",
-        """Comma-separated color codes for gradient. Supports **hex** (6 digits, with or without #) and **CSS color names** (e.g. red, blue, darkgreen). Color names follow the CSS named color dictionary: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
+        """Comma-separated color codes for gradient. Shown only when Palette preset is Custom.
+        Supports **hex** (6 digits, with or without #) and **CSS color names** (e.g. red, blue, darkgreen). Color names follow the CSS named color dictionary: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
 
         Common gradient combinations (hex or names):
 
@@ -326,7 +388,7 @@ class ViewNodeGEEMap:
 
         Examples: '000080,00FF00,FF0000' or 'navy,green,red'""",
         default_value="000000,FFFFFF",
-    )
+    ).rule(knext.OneOf(palette_preset, ["Custom"]), knext.Effect.SHOW)
 
     alpha = knext.DoubleParameter(
         "Alpha (Transparency)",
@@ -394,13 +456,10 @@ class ViewNodeGEEMap:
 
     def execute(self, exec_context: knext.ExecutionContext, image_connection):
         import ee
-        import geemap.foliumap as geemap
         import logging
 
         LOGGER = logging.getLogger(__name__)
 
-        # Get image directly from connection object
-        # No need to initialize GEE - it's already initialized in the same Python process!
         image = image_connection.image
 
         # Get all available band names
@@ -581,7 +640,10 @@ class ViewNodeGEEMap:
 
             # Parse color palette (hex or CSS named colors)
             color_list = []
-            for color in self.color_palette.split(","):
+            palette_str = _resolve_palette_string(
+                getattr(self, "palette_preset", "Custom"), self.color_palette
+            )
+            for color in palette_str.split(","):
                 color_list.append(_normalize_color_to_hex(color))
 
             # Calculate statistics based on selected mode
@@ -673,23 +735,9 @@ class ViewNodeGEEMap:
             #     f"Single band mode: {single_band}, colors: {color_list}, range: {min_val}-{max_val}"
             # )
 
-        # Create map
-        Map = geemap.Map()
-
-        # Add base map layer
-        if self.base_map == "OpenStreetMap":
-            Map.add_basemap("OpenStreetMap")
-        elif self.base_map == "Satellite":
-            Map.add_basemap("Satellite")
-        elif self.base_map == "Terrain":
-            Map.add_basemap("Terrain")
-        elif self.base_map == "Hybrid":
-            Map.add_basemap("Hybrid")
-
-        Map.addLayer(image, vis, "GEE Image")
-
+        Map = _create_folium_map(self.base_map)
+        _add_ee_layer(Map, image, vis, "GEE Image")
         _center_map_on_object(Map, image)
-        # replace css and JavaScript paths
         html = Map.get_root().render()
 
         return knext.view(html)
@@ -780,10 +828,19 @@ class ViewNodeGEEImageCollection:
         default_value="",
     )
 
+    palette_preset = knext.StringParameter(
+        "Palette preset",
+        "Built-in colormaps: matplotlib/ColorBrewer (Viridis, RdBu, …), "
+        "or library:name (cmocean:balance, crameri:turku, landcover:esa). "
+        "Custom shows the Color palette field for manual hex/CSS input or Flow Variables.",
+        default_value="Custom",
+        enum=list(_PALETTE_PRESETS.keys()),
+    )
+
     color_palette = knext.StringParameter(
         "Color palette",
-        """Comma-separated color codes for gradient. Supports hex codes with or without # prefix.
-        Only used for single-band visualization.
+        """Comma-separated color codes for gradient. Shown only when Palette preset is Custom.
+        Supports hex codes with or without # prefix. Only used for single-band visualization.
                 
         Common gradient combinations:
 
@@ -796,7 +853,7 @@ class ViewNodeGEEImageCollection:
 
         Examples: '000080,00FF00,FF0000' or '#000080,#00FF00,#FF0000'""",
         default_value="000000,FFFFFF",
-    )
+    ).rule(knext.OneOf(palette_preset, ["Custom"]), knext.Effect.SHOW)
 
     alpha = knext.DoubleParameter(
         "Alpha (Transparency)",
@@ -867,7 +924,6 @@ class ViewNodeGEEImageCollection:
         self, exec_context: knext.ExecutionContext, image_collection_connection
     ):
         import ee
-        import geemap.foliumap as geemap
         import logging
 
         LOGGER = logging.getLogger(__name__)
@@ -1056,7 +1112,10 @@ class ViewNodeGEEImageCollection:
 
             # Parse color palette (hex or CSS named colors)
             color_list = []
-            for color in self.color_palette.split(","):
+            palette_str = _resolve_palette_string(
+                getattr(self, "palette_preset", "Custom"), self.color_palette
+            )
+            for color in palette_str.split(","):
                 color_list.append(_normalize_color_to_hex(color))
 
             # Calculate statistics based on selected mode
@@ -1142,24 +1201,9 @@ class ViewNodeGEEImageCollection:
                 "opacity": self.alpha,
             }
 
-        # Create map
-        Map = geemap.Map()
-
-        # Add base map layer
-        if self.base_map == "OpenStreetMap":
-            Map.add_basemap("OpenStreetMap")
-        elif self.base_map == "Satellite":
-            Map.add_basemap("Satellite")
-        elif self.base_map == "Terrain":
-            Map.add_basemap("Terrain")
-        elif self.base_map == "Hybrid":
-            Map.add_basemap("Hybrid")
-
-        Map.addLayer(image, vis, "GEE Image Collection")
-
-        # center the map automatically based on image bounds
-        Map.centerObject(image)
-        # replace css and JavaScript paths
+        Map = _create_folium_map(self.base_map)
+        _add_ee_layer(Map, image, vis, "GEE Image Collection")
+        _center_map_on_object(Map, image)
         html = Map.get_root().render()
 
         return knext.view(html)
@@ -1192,6 +1236,13 @@ class ViewNodeGEEFeatureCollection:
     This view is highly interactive and allows you to change various aspects of the view within the visualization itself.
     For more information about the supported interactions see the [geemap user guides](https://geemap.org/).
 
+    **Coloring:**
+
+    - Leave **Color column** empty for a uniform fill (uses the first color in the palette).
+    - Set **Color column** to a numeric property for equal-interval choropleth coloring.
+    - **Palette preset** uses the same built-in colormaps as **GEE Image View** (Viridis, RdBu,
+      ``landcover:esa``, etc.). Choose **Custom** to edit **Fill color palette** manually.
+
     """
 
     # Feature collection visualization parameters
@@ -1201,13 +1252,24 @@ class ViewNodeGEEFeatureCollection:
         default_value="",
     )
 
+    palette_preset = knext.StringParameter(
+        "Palette preset",
+        "Built-in colormaps: matplotlib/ColorBrewer (Viridis, RdBu, …), "
+        "or library:name (cmocean:balance, crameri:turku, landcover:esa). "
+        "Custom shows the Fill color palette field for manual hex/CSS input or Flow Variables.",
+        default_value="Custom",
+        enum=list(_PALETTE_PRESETS.keys()),
+    )
+
     color_palette = knext.StringParameter(
         "Fill color palette",
-        """Comma-separated color codes for feature coloring. Supports **hex** (6 digits, with or without #) and **CSS color names** (e.g. red, blue, darkgreen). Full list: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
+        """Comma-separated color codes for feature fill gradient. Shown only when Palette preset is Custom.
+        Supports **hex** (6 digits, with or without #) and **CSS color names** (e.g. red, blue, darkgreen).
+        Full list: https://developer.mozilla.org/en-US/docs/Web/CSS/named-color
 
         Examples: 'FF0000,00FF00,0000FF' or 'red,green,blue'""",
         default_value="FF0000,00FF00,0000FF",
-    )
+    ).rule(knext.OneOf(palette_preset, ["Custom"]), knext.Effect.SHOW)
 
     fill_opacity = knext.DoubleParameter(
         "Fill opacity",
@@ -1292,16 +1354,18 @@ class ViewNodeGEEFeatureCollection:
 
     def execute(self, exec_context: knext.ExecutionContext, fc_connection):
         import ee
-        import geemap.foliumap as geemap
         import logging
 
         LOGGER = logging.getLogger(__name__)
 
         feature_collection = fc_connection.feature_collection
 
-        # Parse fill palette (hex or CSS named colors)
+        # Parse fill palette (preset or custom hex/CSS named colors)
+        palette_str = _resolve_palette_string(
+            getattr(self, "palette_preset", "Custom"), self.color_palette
+        )
         color_list = []
-        for color in self.color_palette.split(","):
+        for color in palette_str.split(","):
             color_list.append(_normalize_color_to_hex(color))
 
         stroke_hex = _normalize_color_to_hex(self.stroke_color)
@@ -1417,18 +1481,7 @@ class ViewNodeGEEFeatureCollection:
             "width": self.stroke_width,
         }
 
-        # Create map
-        Map = geemap.Map()
-
-        # Add base map layer
-        if self.base_map == "OpenStreetMap":
-            Map.add_basemap("OpenStreetMap")
-        elif self.base_map == "Satellite":
-            Map.add_basemap("Satellite")
-        elif self.base_map == "Terrain":
-            Map.add_basemap("Terrain")
-        elif self.base_map == "Hybrid":
-            Map.add_basemap("Hybrid")
+        Map = _create_folium_map(self.base_map)
 
         # Apply gradient coloring system
         layer_to_add = None
@@ -1491,7 +1544,7 @@ class ViewNodeGEEFeatureCollection:
                         vmin_ee=vmin_ee,
                         vmax_ee=vmax_ee,
                     )
-                    Map.addLayer(
+                    _add_ee_layer(Map,
                         styled_img, {}, f"{self.color_column} (equal interval)"
                     )
 
@@ -1503,7 +1556,7 @@ class ViewNodeGEEFeatureCollection:
                     layer_to_add = feature_collection.style(
                         **dict(base_style, fillColor=fill)
                     )
-                    Map.addLayer(layer_to_add, {}, "Feature Collection")
+                    _add_ee_layer(Map,layer_to_add, {}, "Feature Collection")
 
                 layer_to_add = None  # Already added through Map.addLayer
 
@@ -1515,15 +1568,14 @@ class ViewNodeGEEFeatureCollection:
                 layer_to_add = feature_collection.style(
                     **dict(base_style, fillColor=fill)
                 )
-                Map.addLayer(layer_to_add, {}, "Feature Collection")
+                _add_ee_layer(Map,layer_to_add, {}, "Feature Collection")
         else:
             # Uniform coloring
             fill = with_alpha(palette[0] if palette else "FF0000", self.fill_opacity)
             layer_to_add = feature_collection.style(**dict(base_style, fillColor=fill))
-            Map.addLayer(layer_to_add, {}, "Feature Collection")
+            _add_ee_layer(Map,layer_to_add, {}, "Feature Collection")
 
-        # Auto center the map to fit all features
-        Map.centerObject(feature_collection)
+        _center_map_on_object(Map, feature_collection)
 
         # Get map HTML
         html = Map.get_root().render()
